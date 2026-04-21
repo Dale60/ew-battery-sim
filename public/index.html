@@ -85,7 +85,8 @@
 const { useState, useMemo, useEffect, Fragment, useRef } = React;
 const {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceLine, Area, ComposedChart, Legend, ScatterChart, Scatter, ReferenceDot
+  ReferenceLine, Area, ComposedChart, Legend, ScatterChart, Scatter, ReferenceDot,
+  BarChart, Bar, Cell
 } = Recharts;
 
 // =============================================================================
@@ -97,12 +98,13 @@ const {
 // last updated and what changed without trawling the changelog.
 // =============================================================================
 const VERSION_INFO = {
-  version: '3.8.4',
+  version: '3.8.5',
   released: '2026-04-22',
-  headline: 'Design tab layout fix — grid now renders correctly',
+  headline: 'Palette refresh + chart style selector (Scatter / Lines / Bars)',
   details: [
-    'DesignPanel used an undefined `styles.grid` and non-matching CSS class, so its 2-column layout silently collapsed — sidebar inputs and results panel overlapped, making controls (including the Re-Analyse button) unreachable on some clicks',
-    'Switched to the same `styles.layout` + `.layout` class used by Simulate tab, which has proper responsive breakpoints and a real `display: grid`',
+    'New cell palette with 6 distinct, colourblind-safe hues — Bobbin D yellow, Spiral D red, HPC1520 light blue, HPC1530 teal, HPC1550 purple, A×2 pink. No more ambiguous orange-on-brown collisions',
+    'Feasibility envelope chart now has a style switcher: Scatter (full 36-sim envelope), Lines (per-cell curves showing sensitivity to TX rate), Bars (ranked life at chosen freq — cleanest "which cell" view)',
+    'Bar mode highlights V_pulse-failing cells with a dark-red fill and red outline so they\'re clearly disqualified',
   ],
 };
 
@@ -119,7 +121,7 @@ const CELLS = {
     selfDischarge_pctYear_25C: 1.0,
     passivation_V: 0.35, passivation_tau_s: 180,
     tempMin: -55, tempMax: 85,
-    color: '#d4a574',
+    color: '#f0c674',
     supplier: 'Long Sing / Fanso ER34615 — 19 Ah nominal (JIS-standard D-cell)',
   },
   'ER34615M': {
@@ -134,7 +136,7 @@ const CELLS = {
     selfDischarge_pctYear_25C: 2.0,
     passivation_V: 0.12, passivation_tau_s: 30,
     tempMin: -55, tempMax: 85,
-    color: '#c97b4a',
+    color: '#e5534b',
     supplier: 'Long Sing ER34615M — 14 Ah spiral',
   },
 
@@ -154,7 +156,7 @@ const CELLS = {
     selfDischarge_pctYear_25C: 1.0,
     passivation_V: 0.08, passivation_tau_s: 8,
     tempMin: -55, tempMax: 85,
-    color: '#6b9bd1',
+    color: '#6cbbf2',
     supplier: 'Long Sing P101001460 — ≥3.35V @ 5Ω load',
     loadV_5ohm: 3.35,
   },
@@ -171,7 +173,7 @@ const CELLS = {
     selfDischarge_pctYear_25C: 1.0,
     passivation_V: 0.05, passivation_tau_s: 5,
     tempMin: -55, tempMax: 85,
-    color: '#5a85b8',
+    color: '#2dc0a5',
     supplier: 'Long Sing P101001470 — ≥3.40V @ 5Ω load',
     loadV_5ohm: 3.40,
   },
@@ -188,7 +190,7 @@ const CELLS = {
     selfDischarge_pctYear_25C: 1.0,
     passivation_V: 0.04, passivation_tau_s: 4,
     tempMin: -55, tempMax: 85,
-    color: '#4a7ab3',
+    color: '#a78bfa',
     supplier: 'Long Sing P101001480 — ≥3.45V @ 5Ω load, 3.5A PPTC',
     loadV_5ohm: 3.45,
   },
@@ -207,7 +209,7 @@ const CELLS = {
     selfDischarge_pctYear_25C: 2.0,
     passivation_V: 0.15, passivation_tau_s: 40,
     tempMin: -55, tempMax: 85,
-    color: '#b87a5a',
+    color: '#ef6aa2',
     supplier: 'Fanso ER18505M × 2 — 3.5 Ah each, 7 Ah total',
   },
 };
@@ -2092,7 +2094,7 @@ function DesignPanel() {
             <div style={{opacity: isStale ? 0.55 : 1, transition: 'opacity 0.3s'}}>
               <DesignVerdict results={results} />
               <DesignRecommendations results={results} />
-              <DesignScatter results={results} targetYears={results.targetYears} />
+              <DesignChart results={results} targetYears={results.targetYears} />
             </div>
           </>
         )}
@@ -2171,9 +2173,13 @@ function DesignRecommendations({ results }) {
   );
 }
 
-function DesignScatter({ results, targetYears }) {
-  // Scatter: X = TX period (log scale via index), Y = life years
-  // Color by cell, size indicates margin. Target line at Y=targetYears.
+function DesignChart({ results, targetYears }) {
+  // Chart style selector. Three views of the same 36-sim sweep:
+  //   scatter: one dot per (cell × freq), good for seeing the whole feasibility envelope
+  //   line:    connected per cell across freqs, shows life-vs-freq curves clearly
+  //   bar:     horizontal bars at the USER'S chosen freq only, cleanest "which cell" view
+  const [chartStyle, setChartStyle] = useState('scatter');
+
   const periodIndices = TX_FREQUENCIES.map((f, i) => ({ ...f, x: i }));
   const data = results.scatterData.map(d => ({
     ...d,
@@ -2181,69 +2187,172 @@ function DesignScatter({ results, targetYears }) {
     y: d.life,
   }));
 
-  // Group by cell for separate Scatter series
+  // Group by cell for line/scatter per-series rendering
   const byCell = {};
   for (const d of data) {
     if (!byCell[d.cellKey]) byCell[d.cellKey] = [];
     byCell[d.cellKey].push(d);
   }
+  // Sort each cell's points by x so lines don't backtrack
+  Object.values(byCell).forEach(arr => arr.sort((a, b) => a.x - b.x));
+
+  // Bar-mode data: one row per cell, showing life at the user's target freq
+  const barData = results.ranked.map(r => ({
+    name: CELLS[r.cellKey].shortName,
+    cellKey: r.cellKey,
+    life: Math.min(r.life, 25),
+    meetsTarget: r.margin >= 0 && !r.pulseFail,
+    pulseFail: r.pulseFail,
+    margin: r.margin,
+    color: CELLS[r.cellKey].color,
+  })).sort((a, b) => b.life - a.life);
+
+  const customTooltip = ({ payload }) => {
+    if (!payload || !payload[0]) return null;
+    const d = payload[0].payload;
+    return (
+      <div style={{background: '#131316', border: '1px solid #333', padding: '8px 12px',
+                   fontSize: 11, fontFamily: '"IBM Plex Mono", monospace'}}>
+        <div style={{color: d.cellColor || d.color, fontWeight: 600, marginBottom: 4}}>
+          {d.cellName || d.name}
+        </div>
+        <div style={{color: '#ccc'}}>
+          {d.freqLabel ? `every ${d.freqLabel}: ` : 'life: '}
+          {(d.life).toFixed(1)} yr
+        </div>
+        {d.pulseFailed && <div style={{color: '#ff7a7a'}}>⚡ V_pulse brownout</div>}
+        {d.pulseFail && <div style={{color: '#ff7a7a'}}>⚡ V_pulse brownout</div>}
+        {typeof d.margin === 'number' && (
+          <div style={{color: d.meetsTarget ? '#7dd87d' : '#ff7a7a'}}>
+            {d.margin >= 0 ? '+' : ''}{(d.margin * 100).toFixed(0)}% vs target
+          </div>
+        )}
+        {typeof d.targetMet === 'boolean' && (
+          <div style={{color: d.targetMet ? '#7dd87d' : '#ff7a7a'}}>
+            {d.targetMet ? '✓ meets target' : '✗ below target'}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const targetIdx = TX_FREQUENCIES.findIndex(f => f.label === results.targetFreq);
 
   return (
     <div style={styles.feedbackPanel}>
       <div style={styles.chartHead}>
-        <div style={styles.chartTitle}>Feasibility envelope</div>
-        <div style={styles.chartSub}>
-          Life achievable at each TX frequency, per cell. Dashed line = {targetYears}-year target.
-          Points above the line meet the target. The vertical band marks your chosen TX frequency ({results.targetFreq}).
+        <div style={{display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap'}}>
+          <div style={{flex: 1, minWidth: 280}}>
+            <div style={styles.chartTitle}>Feasibility envelope</div>
+            <div style={styles.chartSub}>
+              {chartStyle === 'scatter' && `All 36 simulations (6 cells × 6 TX freqs). Dashed line = ${targetYears}-year target. Vertical band marks your chosen freq (${results.targetFreq}).`}
+              {chartStyle === 'line' && `Life-vs-TX-frequency curves per cell. Steeper = more sensitive to TX rate.`}
+              {chartStyle === 'bar' && `Ranked life at your chosen TX frequency (${results.targetFreq}). Green bars meet target.`}
+            </div>
+          </div>
+          <div style={styles.chartStyleSwitcher}>
+            {[
+              {k: 'scatter', label: 'Scatter'},
+              {k: 'line', label: 'Lines'},
+              {k: 'bar', label: 'Bars'},
+            ].map(opt => (
+              <button key={opt.k}
+                      onClick={() => setChartStyle(opt.k)}
+                      style={{
+                        ...styles.chartStyleBtn,
+                        ...(chartStyle === opt.k ? styles.chartStyleBtnActive : {}),
+                      }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
+
       <ResponsiveContainer width="100%" height={340}>
-        <ScatterChart margin={{top: 20, right: 30, left: 0, bottom: 40}}>
-          <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
-          <XAxis type="number" dataKey="x" name="TX frequency"
-                 domain={[-0.5, TX_FREQUENCIES.length - 0.5]}
-                 ticks={TX_FREQUENCIES.map((_, i) => i)}
-                 tickFormatter={(v) => TX_FREQUENCIES[v]?.label || ''}
-                 stroke="#888" tick={{fill:'#888', fontSize: 11}}
-                 label={{value: 'TX frequency', position: 'insideBottom', offset: -10,
-                         fill: '#888', fontSize: 11}} />
-          <YAxis type="number" dataKey="y" name="Life"
-                 domain={[0, 25]} stroke="#888"
-                 tick={{fill:'#888', fontSize: 11}}
-                 label={{value: 'Achievable life (yr)', angle: -90, position: 'insideLeft',
-                         fill: '#888', fontSize: 11}} />
-          <Tooltip content={({payload}) => {
-            if (!payload || !payload[0]) return null;
-            const d = payload[0].payload;
-            return (
-              <div style={{background:'#131316', border:'1px solid #333', padding:'8px 12px',
-                           fontSize: 11, fontFamily:'"IBM Plex Mono",monospace'}}>
-                <div style={{color: d.cellColor, fontWeight: 600, marginBottom: 4}}>{d.cellName}</div>
-                <div style={{color: '#ccc'}}>every {d.freqLabel}: {d.life.toFixed(1)} yr</div>
-                {d.pulseFailed && (
-                  <div style={{color: '#ff7a7a'}}>⚡ V_pulse brownout</div>
-                )}
-                <div style={{color: d.targetMet ? '#7dd87d' : '#ff7a7a'}}>
-                  {d.targetMet ? '✓ meets target' : '✗ below target'}
-                </div>
-              </div>
-            );
-          }} />
-          <ReferenceLine y={targetYears} stroke="#c97b4a" strokeDasharray="4 4"
-                         label={{value: `target: ${targetYears}yr`, fill: '#c97b4a', fontSize: 10, position: 'right'}} />
-          {/* Vertical band at user's chosen TX freq */}
-          {(() => {
-            const targetIdx = TX_FREQUENCIES.findIndex(f => f.label === results.targetFreq);
-            return targetIdx >= 0 ? (
-              <ReferenceLine x={targetIdx} stroke="#6b9bd1" strokeDasharray="2 4" strokeOpacity={0.5} />
-            ) : null;
-          })()}
-          {Object.entries(byCell).map(([cellKey, pts]) => (
-            <Scatter key={cellKey} name={CELLS[cellKey].shortName} data={pts}
-                     fill={CELLS[cellKey].color} />
-          ))}
-          <Legend wrapperStyle={{fontSize: 11, paddingTop: 10}} />
-        </ScatterChart>
+        {chartStyle === 'scatter' && (
+          <ScatterChart margin={{top: 20, right: 30, left: 0, bottom: 40}}>
+            <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
+            <XAxis type="number" dataKey="x" name="TX frequency"
+                   domain={[-0.5, TX_FREQUENCIES.length - 0.5]}
+                   ticks={TX_FREQUENCIES.map((_, i) => i)}
+                   tickFormatter={(v) => TX_FREQUENCIES[v]?.label || ''}
+                   stroke="#888" tick={{fill: '#888', fontSize: 11}}
+                   label={{value: 'TX frequency', position: 'insideBottom', offset: -10,
+                           fill: '#888', fontSize: 11}} />
+            <YAxis type="number" dataKey="y" name="Life" domain={[0, 25]}
+                   stroke="#888" tick={{fill: '#888', fontSize: 11}}
+                   label={{value: 'Achievable life (yr)', angle: -90,
+                           position: 'insideLeft', fill: '#888', fontSize: 11}} />
+            <Tooltip content={customTooltip} />
+            <ReferenceLine y={targetYears} stroke="#c97b4a" strokeDasharray="4 4"
+                           label={{value: `target: ${targetYears}yr`, fill: '#c97b4a', fontSize: 10, position: 'right'}} />
+            {targetIdx >= 0 && (
+              <ReferenceLine x={targetIdx} stroke="#888" strokeDasharray="2 4" strokeOpacity={0.5} />
+            )}
+            {Object.entries(byCell).map(([cellKey, pts]) => (
+              <Scatter key={cellKey} name={CELLS[cellKey].shortName} data={pts}
+                       fill={CELLS[cellKey].color} />
+            ))}
+            <Legend wrapperStyle={{fontSize: 11, paddingTop: 10}} />
+          </ScatterChart>
+        )}
+
+        {chartStyle === 'line' && (
+          <LineChart margin={{top: 20, right: 30, left: 0, bottom: 40}}>
+            <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
+            <XAxis type="number" dataKey="x" name="TX frequency"
+                   domain={[-0.5, TX_FREQUENCIES.length - 0.5]}
+                   ticks={TX_FREQUENCIES.map((_, i) => i)}
+                   tickFormatter={(v) => TX_FREQUENCIES[v]?.label || ''}
+                   allowDuplicatedCategory={false}
+                   stroke="#888" tick={{fill: '#888', fontSize: 11}}
+                   label={{value: 'TX frequency', position: 'insideBottom', offset: -10,
+                           fill: '#888', fontSize: 11}} />
+            <YAxis type="number" domain={[0, 25]}
+                   stroke="#888" tick={{fill: '#888', fontSize: 11}}
+                   label={{value: 'Achievable life (yr)', angle: -90,
+                           position: 'insideLeft', fill: '#888', fontSize: 11}} />
+            <Tooltip content={customTooltip} />
+            <ReferenceLine y={targetYears} stroke="#c97b4a" strokeDasharray="4 4"
+                           label={{value: `target: ${targetYears}yr`, fill: '#c97b4a', fontSize: 10, position: 'right'}} />
+            {targetIdx >= 0 && (
+              <ReferenceLine x={targetIdx} stroke="#888" strokeDasharray="2 4" strokeOpacity={0.5} />
+            )}
+            {Object.entries(byCell).map(([cellKey, pts]) => (
+              <Line key={cellKey} name={CELLS[cellKey].shortName} data={pts}
+                    type="monotone" dataKey="y" stroke={CELLS[cellKey].color}
+                    strokeWidth={2} dot={{r: 4, fill: CELLS[cellKey].color}}
+                    activeDot={{r: 6}} isAnimationActive={false} />
+            ))}
+            <Legend wrapperStyle={{fontSize: 11, paddingTop: 10}} />
+          </LineChart>
+        )}
+
+        {chartStyle === 'bar' && (
+          <BarChart data={barData} layout="vertical"
+                    margin={{top: 10, right: 50, left: 10, bottom: 20}}>
+            <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
+            <XAxis type="number" domain={[0, Math.max(25, targetYears * 1.5)]}
+                   stroke="#888" tick={{fill: '#888', fontSize: 11}}
+                   label={{value: 'Achievable life (yr)', position: 'insideBottom',
+                           offset: -5, fill: '#888', fontSize: 11}} />
+            <YAxis type="category" dataKey="name" width={90}
+                   stroke="#888" tick={{fill: '#e8e8e8', fontSize: 11,
+                                         fontFamily: '"IBM Plex Mono", monospace'}} />
+            <Tooltip content={customTooltip} cursor={{fill: 'rgba(201,123,74,0.06)'}} />
+            <ReferenceLine x={targetYears} stroke="#c97b4a" strokeDasharray="4 4"
+                           label={{value: `target: ${targetYears}yr`, fill: '#c97b4a',
+                                   fontSize: 10, position: 'top'}} />
+            <Bar dataKey="life" radius={[0, 2, 2, 0]}>
+              {barData.map((entry, i) => (
+                <Cell key={i} fill={entry.pulseFail ? '#5a2a2a' : entry.color}
+                      stroke={entry.pulseFail ? '#ff7a7a' : 'none'}
+                      strokeWidth={entry.pulseFail ? 1 : 0} />
+              ))}
+            </Bar>
+          </BarChart>
+        )}
       </ResponsiveContainer>
     </div>
   );
@@ -3412,6 +3521,21 @@ const styles = {
   },
   whatsNewList: {
     paddingLeft: 20, margin: 0,
+  },
+
+  chartStyleSwitcher: {
+    display: 'inline-flex', border: '1px solid #2a2a2a', borderRadius: 0,
+    overflow: 'hidden', alignSelf: 'flex-start',
+  },
+  chartStyleBtn: {
+    padding: '6px 14px', background: 'transparent', color: '#888',
+    border: 'none', borderRight: '1px solid #2a2a2a',
+    fontSize: 10, fontFamily: '"IBM Plex Mono", monospace',
+    letterSpacing: '0.1em', cursor: 'pointer',
+    textTransform: 'uppercase',
+  },
+  chartStyleBtnActive: {
+    background: 'rgba(201, 123, 74, 0.15)', color: '#c97b4a',
   },
 
   main: { display: 'flex', flexDirection: 'column', gap: 16 },
