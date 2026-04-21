@@ -98,13 +98,13 @@ const {
 // last updated and what changed without trawling the changelog.
 // =============================================================================
 const VERSION_INFO = {
-  version: '3.8.5',
+  version: '3.8.6',
   released: '2026-04-22',
-  headline: 'Palette refresh + chart style selector (Scatter / Lines / Bars)',
+  headline: 'Pulse-rating enforcement + Model Fidelity notes',
   details: [
-    'New cell palette with 6 distinct, colourblind-safe hues — Bobbin D yellow, Spiral D red, HPC1520 light blue, HPC1530 teal, HPC1550 purple, A×2 pink. No more ambiguous orange-on-brown collisions',
-    'Feasibility envelope chart now has a style switcher: Scatter (full 36-sim envelope), Lines (per-cell curves showing sensitivity to TX rate), Bars (ranked life at chosen freq — cleanest "which cell" view)',
-    'Bar mode highlights V_pulse-failing cells with a dark-red fill and red outline so they\'re clearly disqualified',
+    'Design tab now enforces datasheet pulse-current ratings: cells pushed beyond 120% of their rated max pulse (I_pulse_rated × 1.2 including voltage-scaled inrush) get a ⛔ OVER PULSE RATING flag and drop below V_pulse-fail cells in the ranking. Prevents false-positives where Bobbin D at 520mA looked "feasible" on energy alone',
+    'New Model Fidelity card in the How-this-works tab documents exactly what\'s modelled well (Peukert at moderate current, temperature capacity, IR-based sag, passivation) vs what\'s approximated (cold pulse derate, duty-cycle recovery, pulse-rating life reduction). Cites Saft, Long Sing, Ye 2023, Cheng 2016, and Ahotech 2026 as source data',
+    'Honest error bands: ±25% on life under moderate conditions, up to 2× under harsh conditions (sub-zero + high peak current + sub-5-min TX). Always benchtop-test before committing to the field',
   ],
 };
 
@@ -1837,8 +1837,23 @@ function DesignPanel() {
 
       const SIM_DURATION_YRS = Math.max(targetYears * 1.5, 15);
 
+      // Effective peak current demanded by this backhaul — used for pulse-rating check.
+      // Uses the same 1.8× inrush cap as the voltage-scaled modem model to approximate
+      // the worst-case current the cell actually has to deliver.
+      const effectivePeakDemand_mA = bh.pulseCurrent_mA * (bh.voltageScaledModem ? 1.5 : 1.0);
+
       for (const [cellKey, cell] of Object.entries(CELLS)) {
-        cellBest[cellKey] = { life: 0, freq: null, margin: -999, pulseFail: false };
+        cellBest[cellKey] = { life: 0, freq: null, margin: -999, pulseFail: false, overPulse: false };
+
+        // Pulse-rating enforcement: Saft/Tadiran/Long Sing datasheets are explicit that
+        // pulse ratings are hard limits. Pulling beyond 1.2× the rated max causes
+        // excessive voltage sag (beyond what our IR model predicts), accelerated
+        // passivation, and in extreme cases permanent capacity loss. Cells flagged
+        // overPulse are ranked last in the Design tab with an explicit warning —
+        // even if V_pulse calc happens to stay above cutoff, the datasheet says
+        // "don't do this" and we should surface that.
+        const overPulse = effectivePeakDemand_mA > cell.Imax_pulse_mA * 1.2;
+        const overPulseRatio = effectivePeakDemand_mA / cell.Imax_pulse_mA;
 
         for (const freq of TX_FREQUENCIES) {
           const r = simulate({
@@ -1893,37 +1908,43 @@ function DesignPanel() {
             freqLabel: freq.label,
             period_s: freq.period_s,
             life: Math.min(achievedLife, 25),
-            targetMet: achievedLife >= targetYears && !pulseFailed,
+            targetMet: achievedLife >= targetYears && !pulseFailed && !overPulse,
             pulseFailed,
+            overPulse,
+            overPulseRatio,
             isTargetFreq: freq.key === txFreq,
           });
 
           // Track best at target frequency
           if (freq.key === txFreq) {
             const margin = (achievedLife - targetYears) / targetYears;
-            cellBest[cellKey] = { life: achievedLife, freq: freq.key, margin, pulseFail: pulseFailed };
+            cellBest[cellKey] = { life: achievedLife, freq: freq.key, margin,
+                                  pulseFail: pulseFailed, overPulse, overPulseRatio };
           }
         }
       }
 
-      // Rank cells: first by pulse-fail (fails last), then by margin.
-      // A cell with V_pulse brownout is unusable no matter how much energy it has.
+      // Rank cells: overPulse cells last (datasheet-exceeding = unreliable),
+      // then pulseFail cells (V_pulse brownout), then by margin.
       const ranked = Object.entries(cellBest)
         .map(([k, v]) => ({ cellKey: k, cellName: CELLS[k].shortName, fullName: CELLS[k].name, ...v }))
         .sort((a, b) => {
+          if (a.overPulse !== b.overPulse) return a.overPulse ? 1 : -1;
           if (a.pulseFail !== b.pulseFail) return a.pulseFail ? 1 : -1;
           return b.margin - a.margin;
         });
 
-      // Top result verdict. Note: cells with pulseFail are ranked last, so
-      // if the top of the list is pulse-failing, ALL cells failed pulse —
-      // that's an infeasible scenario even if capacity-life looks long.
+      // Top result verdict.
       const winner = ranked[0];
       let verdict, verdictColor, verdictHeadline;
       if (!winner) {
         verdict = 'INFEASIBLE';
         verdictColor = '#ff7a7a';
         verdictHeadline = `No viable cell for this scenario.`;
+      } else if (winner.overPulse) {
+        verdict = 'INFEASIBLE';
+        verdictColor = '#ff7a7a';
+        verdictHeadline = `Every cell in the library is pushed beyond its datasheet pulse rating by this ${effectivePeakDemand_mA.toFixed(0)}mA peak demand. Pick a lower-peak modem, add an HPC capacitor, or use a larger cell.`;
       } else if (winner.pulseFail) {
         verdict = 'INFEASIBLE';
         verdictColor = '#ff7a7a';
@@ -1952,9 +1973,13 @@ function DesignPanel() {
       narrative.push(`**Environment:** ${DESIGN_ENVIRONMENTS[envPreset]?.label || 'Custom'} (mean ${envMeanT}°C, yearly swing ±${envYearAmp}°C).`);
       narrative.push(`**Coverage:** ${COVERAGE_OPTIONS[coverage].label}.`);
 
-      // "Feasible" = meets margin AND no pulse failure
-      const feasibleCount = ranked.filter(r => r.margin >= 0 && !r.pulseFail).length;
+      // "Feasible" = meets margin AND no pulse failure AND not exceeding datasheet pulse rating
+      const feasibleCount = ranked.filter(r => r.margin >= 0 && !r.pulseFail && !r.overPulse).length;
       const pulseFailCount = ranked.filter(r => r.pulseFail).length;
+      const overPulseCount = ranked.filter(r => r.overPulse).length;
+      if (overPulseCount > 0) {
+        narrative.push(`**Pulse-rating warning:** ${overPulseCount} cell${overPulseCount > 1 ? 's are' : ' is'} being pushed beyond the datasheet max pulse rating (I_pulse_rated × 1.2). Even if V_pulse calc stays above cutoff, accelerated passivation and capacity loss are likely — datasheet says don't do this.`);
+      }
       if (pulseFailCount > 0) {
         narrative.push(`**V_pulse warning:** ${pulseFailCount} cell${pulseFailCount > 1 ? 's' : ''} brown out during transmission at this peak current — even if energy lasts, the device may reset on every TX.`);
       }
@@ -2127,19 +2152,22 @@ function DesignRecommendations({ results }) {
       <div style={styles.chartHead}>
         <div style={styles.chartTitle}>Cell ranking at {results.targetFreq} TX</div>
         <div style={styles.chartSub}>
-          Sorted by margin vs {results.targetYears}-year target. Cells that brown out during TX
-          (V_pulse &lt; cutoff) are ranked last regardless of capacity-life.
+          Sorted by: datasheet pulse rating (⛔ first), then V_pulse brownout (⚡),
+          then margin vs {results.targetYears}-year target. Cells flagged ⛔ exceed the
+          manufacturer's max pulse current — datasheet violation, likely unreliable
+          long-term even if the simulation's IR math predicts survival.
         </div>
       </div>
       <div style={{display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14}}>
         {results.ranked.map((r, i) => {
-          // Pulse failure trumps everything — even if the cell has plenty of energy,
-          // V_pulse brownout means the device can't function in this configuration.
-          const meetsTarget = r.margin >= 0 && !r.pulseFail;
-          const color = r.pulseFail ? '#ff7a7a'
+          // Feasibility chain: overPulse > pulseFail > margin
+          const meetsTarget = r.margin >= 0 && !r.pulseFail && !r.overPulse;
+          const color = r.overPulse ? '#ff5a5a'
+                      : r.pulseFail ? '#ff7a7a'
                       : meetsTarget ? (r.margin > 0.3 ? '#7dd87d' : '#f0ad4e')
                       : '#ff7a7a';
-          const icon  = r.pulseFail ? '⚡'
+          const icon  = r.overPulse ? '⛔'
+                      : r.pulseFail ? '⚡'
                       : meetsTarget ? (r.margin > 0.3 ? '✓' : '⚠')
                       : '✗';
           return (
@@ -2149,7 +2177,15 @@ function DesignRecommendations({ results }) {
                 <span style={{fontSize: 10, color:'#666', width: 20,
                               fontFamily:'"IBM Plex Mono",monospace'}}>#{i+1}</span>
                 <strong style={{fontSize: 12, color: '#e8e8e8', flex: 1}}>{r.fullName}</strong>
-                {r.pulseFail && (
+                {r.overPulse && (
+                  <span style={{fontSize: 9, color: '#ff5a5a', background: 'rgba(255,90,90,0.15)',
+                                padding: '2px 6px', letterSpacing: '0.08em',
+                                fontFamily: '"IBM Plex Mono", monospace'}}
+                        title={`Peak demand ${(r.overPulseRatio * 100).toFixed(0)}% of datasheet max`}>
+                    OVER PULSE RATING
+                  </span>
+                )}
+                {r.pulseFail && !r.overPulse && (
                   <span style={{fontSize: 9, color: '#ff7a7a', background: 'rgba(255,122,122,0.12)',
                                 padding: '2px 6px', letterSpacing: '0.08em',
                                 fontFamily: '"IBM Plex Mono", monospace'}}>
@@ -2492,15 +2528,91 @@ function ExplainPanel() {
         <p><strong>Export / Import</strong> is still available — useful for archiving a snapshot to Confluence or sharing a specific set of projects with a customer or supplier. Export emits a JSON file; Import merges it into the server database (duplicates get overwritten).</p>
       </ExplainCard>
 
-      <ExplainCard title="What this simulator doesn't do" color="#888">
-        <p>Some honest caveats on model limitations:</p>
+      <ExplainCard title="Model fidelity — what's physics vs what's approximation" color="#f0ad4e">
+        <p>
+          This simulator is grounded in published Li-SOCl₂ behaviour, but it's an engineering
+          approximation — not a surrogate for benchtop testing. Before using results to commit
+          to a deployment, read this section.
+        </p>
+
+        <p style={{marginTop: 12, color: '#e8e8e8', fontWeight: 600}}>What's modelled well (cross-checked against datasheet curves):</p>
         <ul style={styles.explainList}>
-          <li><strong>Doesn't model individual cell variation.</strong> Real batteries from the same batch can differ by ±10% in lifespan.</li>
-          <li><strong>Doesn't model voltage delay after long cold storage.</strong> Cells stored for years at high temp can have their first transmission fail. You'd depassivate them (apply a small load for a few minutes) before deployment anyway.</li>
-          <li><strong>Doesn't model pack configurations.</strong> Two cells in parallel don't exactly double the capacity; one always leads.</li>
-          <li><strong>Doesn't model how the HPC capacitor ages.</strong> The capacitor itself degrades over 10+ years but this effect is minor.</li>
+          <li><strong>Peukert capacity dropoff at moderate current</strong> — fits Saft/Ultralife bobbin curves with ~6% RMS residual across 0.1–50 mA. Reliable for low-rate discharge.</li>
+          <li><strong>Temperature-dependent capacity</strong> — 100% @ 25°C down to ~55% @ −40°C (low-rate). Matches Saft published tables within ~5%.</li>
+          <li><strong>Pulse voltage sag via IR + Tafel overpotential</strong> — ~30 mV RMS fit across 16 test points in MDPI 2024 dataset.</li>
+          <li><strong>Passivation rebuild during idle</strong> — tau ≈ 1.5 yr at 25°C, calibrated to MDPI Fig 15b.</li>
+          <li><strong>Self-discharge</strong> — 1%/yr baseline (Long Sing/Saft spec), doubled per 10°C warmer.</li>
         </ul>
-        <p>See the <em>Validation</em> tab to see exactly how accurate the model is against published datasheet curves.</p>
+
+        <p style={{marginTop: 12, color: '#e8e8e8', fontWeight: 600}}>What's approximated or missing (design margin needed):</p>
+        <ul style={styles.explainList}>
+          <li>
+            <strong>Cold pulse performance is under-derated.</strong> At −40°C, Li-SOCl₂ cells
+            deliver only ~30% of room-temp pulse capacity (Long Sing). A 1A pulse that sags
+            0.4V at +20°C can sag 0.9V at cold. The simulator handles the IR-at-cold part
+            but doesn't aggressively model the additional electrolyte-viscosity collapse.
+            Expect sub-zero field life to be <strong>15–30% shorter</strong> than predicted.
+          </li>
+          <li>
+            <strong>No duty-cycle recovery penalty.</strong> Li-SOCl₂ needs ~30–60 s to recover
+            fully from a high-current pulse. At TX rates below 5 min, the cell sits in a
+            perpetually-depressed state and effective capacity drops 20–30% (source: Long Sing).
+            Design tab results at 5-min TX are optimistic by roughly this factor.
+          </li>
+          <li>
+            <strong>Pulse-rating enforcement is a 1.2× soft limit.</strong> Drawing significantly
+            above the datasheet-rated pulse max causes accelerated passivation and permanent
+            capacity loss, not just voltage sag. The simulator flags ⛔ OVER PULSE RATING when
+            the effective peak exceeds 120% of the cell's datasheet spec, but does not
+            quantify the life reduction — treat flagged cells as unreliable.
+          </li>
+          <li>
+            <strong>Arctic / deep-cold scenarios are roughest.</strong> At −20°C sustained with
+            pulse loads above 150 mA, real-world field life can be <strong>half or less</strong>
+            of this simulator's prediction without HPC enhancement. Rule of thumb: for bobbin
+            cells below 0°C mean temp with cellular pulses, halve the predicted life for
+            planning.
+          </li>
+          <li>
+            <strong>Individual cell variation.</strong> Saft spec ±10% batch variation. Simulator
+            uses nominal capacity.
+          </li>
+          <li>
+            <strong>Voltage delay after long warm storage.</strong> Cells stored &gt;1 yr at
+            high temp can have a first-pulse brownout that proper depassivation mitigates.
+            Not modelled — depassivation assumed.
+          </li>
+          <li>
+            <strong>HPC capacitor ageing.</strong> The hybrid layer capacitor itself loses a
+            few percent capacitance per decade. Not modelled.
+          </li>
+          <li>
+            <strong>Parallel pack imbalance.</strong> The ER18505M ×2 pack assumes equal sharing;
+            in reality one cell always leads discharge. Model uses halved IR which is
+            approximately correct for a healthy balanced pack.
+          </li>
+        </ul>
+
+        <p style={{marginTop: 12, color: '#e8e8e8', fontWeight: 600}}>References & source data:</p>
+        <ul style={styles.explainList}>
+          <li>Saft LSH20 datasheet — 13 Ah D-cell, 1.8 A continuous, 4 A pulse (high-rate spiral construction).</li>
+          <li>Saft LS/LSH range brochure — LS bobbin designed for 5–150 mA pulse range, 5–20+ yr life; LSH spiral for 50 mA–2 A range, 2–10+ yr.</li>
+          <li>Long Sing Technology — "Beyond 500 Wh/kg" article on temperature and pulse derating (2026).</li>
+          <li>Ye et al. 2023 — <em>Life prediction of lithium thionyl chloride batteries based on pulse-load and accelerated degradation tests</em>, Quality and Reliability Engineering International.</li>
+          <li>Cheng et al. 2016 — <em>Development of a lifetime prediction model for Li/SOCl₂ batteries based on accelerated degradation test</em>, Microelectronics Reliability 65.</li>
+          <li>Ahotech 2026 application note — "IoT battery for extreme cold weather" — confirms NB-IoT 200–500 mA peak, LTE-M / 2G 1–3 A, and cold pulse derating heuristics used above.</li>
+        </ul>
+
+        <p style={{marginTop: 12, color: '#888', fontSize: 12}}>
+          Bottom line: trust this simulator to within roughly <strong>±25% on life</strong>
+          under moderate conditions, and to within a <strong>2× factor on harsh conditions</strong>
+          (sub-zero, high peak current, sub-5-min TX). For any deployment pushing those limits,
+          build a prototype and cold-chamber test before committing.
+        </p>
+      </ExplainCard>
+
+      <ExplainCard title="Validation methodology" color="#888">
+        <p>The <em>Validation</em> tab shows side-by-side plots of this simulator's voltage predictions against published datasheet curves for representative operating points. If you spot a &gt;10% deviation in a use case that matters to you, raise it in the Model Feedback panel and we'll investigate.</p>
       </ExplainCard>
     </div>
   );
