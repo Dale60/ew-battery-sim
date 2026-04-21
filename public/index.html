@@ -91,6 +91,23 @@ const {
 // =============================================================================
 // CELL MODELS
 // =============================================================================
+// =============================================================================
+// VERSION INFO — bump these on every release. Shown in the UI header and
+// in the "What's new" ribbon below the tabs so users can see when the app was
+// last updated and what changed without trawling the changelog.
+// =============================================================================
+const VERSION_INFO = {
+  version: '3.8.2',
+  released: '2026-04-22',
+  headline: 'Honest life projection + V_pulse failure detection in Design tab',
+  details: [
+    'Design tab no longer hardcodes a 15-year fallback when the cell survives the sim window — life is now projected analytically from remaining capacity and average current',
+    'V_pulse brownout (cell voltage drops below cutoff during TX) is tracked per cell and flagged with ⚡ V_PULSE FAIL. Affected cells rank last regardless of capacity-life',
+    'Verdict now flips to INFEASIBLE when no cell can hold pulse voltage at the configured peak current',
+    'Stale-state indicator: Analyse button turns amber and pulses when inputs change after a run; results fade until re-analysed',
+  ],
+};
+
 const CELLS = {
   'ER34615': {
     name: 'ER34615 (Bobbin D)',
@@ -1102,7 +1119,7 @@ function App() {
     <div style={styles.app}>
       <header style={styles.header}>
         <div>
-          <div style={styles.kicker}>EDEN WORTH / POWER SYSTEMS LAB · v3.8 HOSTED</div>
+          <div style={styles.kicker}>EDEN WORTH / POWER SYSTEMS LAB · v{VERSION_INFO.version} HOSTED</div>
           <h1 style={styles.title}>Li-SOCl₂ Cell Simulator</h1>
           <div style={styles.sub}>Validated against Ultralife & MDPI 2024 data · RMS error 30mV across 16 operating points</div>
         </div>
@@ -1118,6 +1135,8 @@ function App() {
           </button>
         </div>
       </header>
+
+      <WhatsNewRibbon />
 
       <div className="tabs">
         <button className={`tab ${tab === 'simulate' ? 'active' : ''}`} onClick={() => setTab('simulate')}>Simulate</button>
@@ -2223,6 +2242,70 @@ function DesignScatter({ results, targetYears }) {
   );
 }
 
+// =============================================================================
+// WHAT'S NEW RIBBON — collapsible banner showing version + latest changes.
+// Uses localStorage keyed by VERSION_INFO.version so the ribbon expands by
+// default for users who haven't seen the current version, and stays collapsed
+// once they've clicked "Got it". Bumping VERSION_INFO.version re-triggers it.
+// =============================================================================
+function WhatsNewRibbon() {
+  const storageKey = `ew_sim_seen_version_${VERSION_INFO.version}`;
+  const [expanded, setExpanded] = useState(() => {
+    try { return localStorage.getItem(storageKey) !== '1'; }
+    catch(e) { return true; }
+  });
+  const dismiss = () => {
+    try { localStorage.setItem(storageKey, '1'); } catch(e) {}
+    setExpanded(false);
+  };
+
+  if (!expanded) {
+    return (
+      <div style={styles.whatsNewCollapsed} onClick={() => setExpanded(true)}>
+        <span style={{color: '#c97b4a', fontFamily: '"IBM Plex Mono", monospace',
+                      letterSpacing: '0.1em', fontSize: 10}}>
+          v{VERSION_INFO.version} · {VERSION_INFO.released}
+        </span>
+        <span style={{color: '#666', marginLeft: 10, fontSize: 11}}>
+          {VERSION_INFO.headline}
+        </span>
+        <span style={{color: '#888', marginLeft: 'auto', fontSize: 10,
+                      fontFamily: '"IBM Plex Mono", monospace'}}>
+          ▸ what's new
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.whatsNewExpanded}>
+      <div style={styles.whatsNewHead}>
+        <div>
+          <span style={{color: '#c97b4a', fontFamily: '"IBM Plex Mono", monospace',
+                        letterSpacing: '0.15em', fontSize: 10, fontWeight: 600}}>
+            NEW IN v{VERSION_INFO.version}
+          </span>
+          <span style={{color: '#666', marginLeft: 12, fontSize: 10,
+                        fontFamily: '"IBM Plex Mono", monospace'}}>
+            released {VERSION_INFO.released}
+          </span>
+        </div>
+        <button onClick={dismiss} style={styles.whatsNewDismiss}>
+          GOT IT ✕
+        </button>
+      </div>
+      <div style={{fontSize: 14, color: '#e8e8e8', marginTop: 6, marginBottom: 10, fontWeight: 300}}>
+        {VERSION_INFO.headline}
+      </div>
+      <ul style={styles.whatsNewList}>
+        {VERSION_INFO.details.map((d, i) => (
+          <li key={i} style={{fontSize: 12, color: '#c8c8c8', lineHeight: 1.5, marginBottom: 4}}>{d}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function ExplainPanel() {
   return (
     <div style={styles.explainWrap}>
@@ -3297,6 +3380,32 @@ const styles = {
     fontWeight: 600, textTransform: 'uppercase', marginBottom: 14,
     fontFamily: '"IBM Plex Mono", monospace' },
   designIntroList: { paddingLeft: 20, margin: '10px 0' },
+
+  whatsNewCollapsed: {
+    padding: '8px 20px', background: 'rgba(201, 123, 74, 0.05)',
+    border: '1px solid rgba(201, 123, 74, 0.25)',
+    display: 'flex', alignItems: 'center',
+    cursor: 'pointer', marginBottom: 10,
+    transition: 'background 0.2s',
+  },
+  whatsNewExpanded: {
+    padding: '14px 20px', background: 'rgba(201, 123, 74, 0.08)',
+    border: '1px solid rgba(201, 123, 74, 0.35)',
+    borderLeft: '3px solid #c97b4a',
+    marginBottom: 14,
+  },
+  whatsNewHead: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+  },
+  whatsNewDismiss: {
+    padding: '4px 10px', background: 'transparent', color: '#c97b4a',
+    border: '1px solid rgba(201, 123, 74, 0.4)', fontSize: 9,
+    cursor: 'pointer', fontFamily: '"IBM Plex Mono", monospace',
+    letterSpacing: '0.1em', fontWeight: 600,
+  },
+  whatsNewList: {
+    paddingLeft: 20, margin: 0,
+  },
 
   main: { display: 'flex', flexDirection: 'column', gap: 16 },
   resultsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 },
