@@ -97,14 +97,12 @@ const {
 // last updated and what changed without trawling the changelog.
 // =============================================================================
 const VERSION_INFO = {
-  version: '3.8.2',
+  version: '3.8.3',
   released: '2026-04-22',
-  headline: 'Honest life projection + V_pulse failure detection in Design tab',
+  headline: 'Bugfix: Re-Analyse button now correctly updates results on subsequent clicks',
   details: [
-    'Design tab no longer hardcodes a 15-year fallback when the cell survives the sim window — life is now projected analytically from remaining capacity and average current',
-    'V_pulse brownout (cell voltage drops below cutoff during TX) is tracked per cell and flagged with ⚡ V_PULSE FAIL. Affected cells rank last regardless of capacity-life',
-    'Verdict now flips to INFEASIBLE when no cell can hold pulse voltage at the configured peak current',
-    'Stale-state indicator: Analyse button turns amber and pulses when inputs change after a run; results fade until re-analysed',
+    'Fixed a stale-closure bug where clicking Re-Analyse after changing inputs stamped the fresh results with the pre-change input signature, leaving the button permanently in "stale" state and making it look like clicks had no effect',
+    'Signature is now captured at click-time, not render-time, so the button returns to its normal state after a successful re-analyse',
   ],
 };
 
@@ -1806,6 +1804,15 @@ function DesignPanel() {
   }, [envPreset]);
 
   const runAnalysis = () => {
+    // Capture signature AT CLICK TIME so the stamped signature matches the
+    // inputs that were actually used for the run. Previously this used the
+    // outer `currentSignature` which was closed-over from render time — fine
+    // for the first click, but any re-click after state changes would stamp
+    // results with a stale signature, making isStale permanently true.
+    const signatureAtRun = JSON.stringify({
+      targetYears, envMeanT, envYearAmp, envDayAmp,
+      backhaul, txFreq, shelfMonths, coverage,
+    });
     setAnalysing(true);
     // Defer to next tick so UI updates before heavy sim loop
     setTimeout(() => {
@@ -1961,7 +1968,7 @@ function DesignPanel() {
         verdict, verdictColor, verdictHeadline, narrative,
         ranked, scatterData,
         targetYears, targetFreq: targetFreq.label, backhaul: bh.label,
-        signature: currentSignature,
+        signature: signatureAtRun,
       });
       setAnalysing(false);
     }, 50);
