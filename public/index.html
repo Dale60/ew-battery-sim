@@ -1807,8 +1807,10 @@ function DesignPanel() {
       const scatterData = [];
       const cellBest = {};  // best achievable life per cell at target freq
 
+      const SIM_DURATION_YRS = Math.max(targetYears * 1.5, 15);
+
       for (const [cellKey, cell] of Object.entries(CELLS)) {
-        cellBest[cellKey] = { life: 0, freq: null, margin: -999 };
+        cellBest[cellKey] = { life: 0, freq: null, margin: -999, pulseFail: false };
 
         for (const freq of TX_FREQUENCIES) {
           const r = simulate({
@@ -1818,12 +1820,43 @@ function DesignPanel() {
             pulseDuration_s: bh.pulseDuration_s,
             pulsePeriod_s: freq.period_s,
             tempProfile,
-            durationYears: Math.max(targetYears * 1.5, 15), // sim long enough to see death
+            durationYears: SIM_DURATION_YRS,
             shelfMonths,
             modifiers,
           });
 
-          const achievedLife = r.deadYears || Math.max(targetYears * 1.5, 15);
+          // Detect pulse-voltage brownout: if V_pulse ever drops below cutoff
+          // during normal operation, the device may reset or fail to transmit.
+          // This isn't "cell exhausted" but it IS functional failure for design.
+          const pulseFailed = r.data.some((pt, idx) =>
+            idx > 2 && pt.V_pulse < r.cell.cutoffV
+          );
+
+          // Honest life estimate: if cell died in sim window, use deadYears.
+          // Otherwise project remaining life from usable_mAh and avgCurrent_mA.
+          let achievedLife;
+          if (r.deadYears) {
+            achievedLife = r.deadYears;
+          } else if (r.avgCurrent_mA > 0 && r.usable_mAh > 0) {
+            // Project: remaining capacity at end of sim / avg current → hours → years
+            const lastPoint = r.data[r.data.length - 1];
+            const remaining_mAh = (lastPoint.soc / 100) * r.usable_mAh;
+            const hoursLeft = remaining_mAh / r.avgCurrent_mA;
+            const yearsLeft = hoursLeft / (24 * 365);
+            achievedLife = lastPoint.years + yearsLeft;
+          } else {
+            achievedLife = SIM_DURATION_YRS;
+          }
+
+          // If pulse voltage fails, treat life as the year when pulse-fail began
+          // (functional failure trumps capacity-based "survival")
+          if (pulseFailed) {
+            const firstFailPoint = r.data.find(pt => pt.V_pulse < r.cell.cutoffV);
+            if (firstFailPoint && firstFailPoint.years < achievedLife) {
+              achievedLife = firstFailPoint.years;
+            }
+          }
+
           scatterData.push({
             cellKey,
             cellName: cell.shortName,
@@ -1832,27 +1865,42 @@ function DesignPanel() {
             freqLabel: freq.label,
             period_s: freq.period_s,
             life: Math.min(achievedLife, 25),
-            targetMet: achievedLife >= targetYears,
+            targetMet: achievedLife >= targetYears && !pulseFailed,
+            pulseFailed,
             isTargetFreq: freq.key === txFreq,
           });
 
           // Track best at target frequency
           if (freq.key === txFreq) {
             const margin = (achievedLife - targetYears) / targetYears;
-            cellBest[cellKey] = { life: achievedLife, freq: freq.key, margin };
+            cellBest[cellKey] = { life: achievedLife, freq: freq.key, margin, pulseFail: pulseFailed };
           }
         }
       }
 
-      // Rank cells by margin at target freq — best feasible first
+      // Rank cells: first by pulse-fail (fails last), then by margin.
+      // A cell with V_pulse brownout is unusable no matter how much energy it has.
       const ranked = Object.entries(cellBest)
         .map(([k, v]) => ({ cellKey: k, cellName: CELLS[k].shortName, fullName: CELLS[k].name, ...v }))
-        .sort((a, b) => b.margin - a.margin);
+        .sort((a, b) => {
+          if (a.pulseFail !== b.pulseFail) return a.pulseFail ? 1 : -1;
+          return b.margin - a.margin;
+        });
 
-      // Top result verdict
+      // Top result verdict. Note: cells with pulseFail are ranked last, so
+      // if the top of the list is pulse-failing, ALL cells failed pulse —
+      // that's an infeasible scenario even if capacity-life looks long.
       const winner = ranked[0];
       let verdict, verdictColor, verdictHeadline;
-      if (!winner || winner.margin < -0.2) {
+      if (!winner) {
+        verdict = 'INFEASIBLE';
+        verdictColor = '#ff7a7a';
+        verdictHeadline = `No viable cell for this scenario.`;
+      } else if (winner.pulseFail) {
+        verdict = 'INFEASIBLE';
+        verdictColor = '#ff7a7a';
+        verdictHeadline = `No cell holds V_pulse ≥ ${CELLS[winner.cellKey].cutoffV}V at ${bh.pulseCurrent_mA}mA ${COVERAGE_OPTIONS[coverage].label.split(' ')[0].toLowerCase()}-coverage pulses. Reduce peak current or pick a lower-impedance cell/HPC.`;
+      } else if (winner.margin < -0.2) {
         verdict = 'INFEASIBLE';
         verdictColor = '#ff7a7a';
         verdictHeadline = `No cell gets close to ${targetYears} yr at ${targetFreq.label} TX in this environment.`;
@@ -1876,7 +1924,12 @@ function DesignPanel() {
       narrative.push(`**Environment:** ${DESIGN_ENVIRONMENTS[envPreset]?.label || 'Custom'} (mean ${envMeanT}°C, yearly swing ±${envYearAmp}°C).`);
       narrative.push(`**Coverage:** ${COVERAGE_OPTIONS[coverage].label}.`);
 
-      const feasibleCount = ranked.filter(r => r.margin >= 0).length;
+      // "Feasible" = meets margin AND no pulse failure
+      const feasibleCount = ranked.filter(r => r.margin >= 0 && !r.pulseFail).length;
+      const pulseFailCount = ranked.filter(r => r.pulseFail).length;
+      if (pulseFailCount > 0) {
+        narrative.push(`**V_pulse warning:** ${pulseFailCount} cell${pulseFailCount > 1 ? 's' : ''} brown out during transmission at this peak current — even if energy lasts, the device may reset on every TX.`);
+      }
       if (feasibleCount === 0) {
         narrative.push(`**Recommendation:** None of the 6 cells meet this target. Consider reducing TX frequency, upgrading to a larger cell/HPC, or relaxing lifespan target.`);
       } else if (feasibleCount <= 2) {
@@ -2045,13 +2098,22 @@ function DesignRecommendations({ results }) {
     <div style={styles.feedbackPanel}>
       <div style={styles.chartHead}>
         <div style={styles.chartTitle}>Cell ranking at {results.targetFreq} TX</div>
-        <div style={styles.chartSub}>Sorted by margin vs {results.targetYears}-year target. Positive = meets target.</div>
+        <div style={styles.chartSub}>
+          Sorted by margin vs {results.targetYears}-year target. Cells that brown out during TX
+          (V_pulse &lt; cutoff) are ranked last regardless of capacity-life.
+        </div>
       </div>
       <div style={{display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14}}>
         {results.ranked.map((r, i) => {
-          const meetsTarget = r.margin >= 0;
-          const color = meetsTarget ? (r.margin > 0.3 ? '#7dd87d' : '#f0ad4e') : '#ff7a7a';
-          const icon = meetsTarget ? (r.margin > 0.3 ? '✓' : '⚠') : '✗';
+          // Pulse failure trumps everything — even if the cell has plenty of energy,
+          // V_pulse brownout means the device can't function in this configuration.
+          const meetsTarget = r.margin >= 0 && !r.pulseFail;
+          const color = r.pulseFail ? '#ff7a7a'
+                      : meetsTarget ? (r.margin > 0.3 ? '#7dd87d' : '#f0ad4e')
+                      : '#ff7a7a';
+          const icon  = r.pulseFail ? '⚡'
+                      : meetsTarget ? (r.margin > 0.3 ? '✓' : '⚠')
+                      : '✗';
           return (
             <div key={r.cellKey} style={{...styles.feedbackCard, borderLeftColor: color, padding: '10px 14px'}}>
               <div style={{display:'flex', alignItems:'center', gap:12}}>
@@ -2059,6 +2121,13 @@ function DesignRecommendations({ results }) {
                 <span style={{fontSize: 10, color:'#666', width: 20,
                               fontFamily:'"IBM Plex Mono",monospace'}}>#{i+1}</span>
                 <strong style={{fontSize: 12, color: '#e8e8e8', flex: 1}}>{r.fullName}</strong>
+                {r.pulseFail && (
+                  <span style={{fontSize: 9, color: '#ff7a7a', background: 'rgba(255,122,122,0.12)',
+                                padding: '2px 6px', letterSpacing: '0.08em',
+                                fontFamily: '"IBM Plex Mono", monospace'}}>
+                    V_PULSE FAIL
+                  </span>
+                )}
                 <span style={{fontSize: 12, color, fontFamily:'"IBM Plex Mono",monospace',
                               letterSpacing: '0.05em'}}>
                   {r.life.toFixed(1)} yr
@@ -2125,6 +2194,9 @@ function DesignScatter({ results, targetYears }) {
                            fontSize: 11, fontFamily:'"IBM Plex Mono",monospace'}}>
                 <div style={{color: d.cellColor, fontWeight: 600, marginBottom: 4}}>{d.cellName}</div>
                 <div style={{color: '#ccc'}}>every {d.freqLabel}: {d.life.toFixed(1)} yr</div>
+                {d.pulseFailed && (
+                  <div style={{color: '#ff7a7a'}}>⚡ V_pulse brownout</div>
+                )}
                 <div style={{color: d.targetMet ? '#7dd87d' : '#ff7a7a'}}>
                   {d.targetMet ? '✓ meets target' : '✗ below target'}
                 </div>
