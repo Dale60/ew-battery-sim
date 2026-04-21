@@ -1,6 +1,6 @@
 {
   "name": "ew-battery-sim",
-  "version": "3.8.3",
+  "version": "3.8.4",
   "description": "Eden Worth Li-SOCl2 battery simulator — hosted edition",
   "type": "module",
   "main": "server/index.js",

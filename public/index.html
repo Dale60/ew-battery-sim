@@ -97,12 +97,12 @@ const {
 // last updated and what changed without trawling the changelog.
 // =============================================================================
 const VERSION_INFO = {
-  version: '3.8.3',
+  version: '3.8.4',
   released: '2026-04-22',
-  headline: 'Bugfix: Re-Analyse button now correctly updates results on subsequent clicks',
+  headline: 'Design tab layout fix — grid now renders correctly',
   details: [
-    'Fixed a stale-closure bug where clicking Re-Analyse after changing inputs stamped the fresh results with the pre-change input signature, leaving the button permanently in "stale" state and making it look like clicks had no effect',
-    'Signature is now captured at click-time, not render-time, so the button returns to its normal state after a successful re-analyse',
+    'DesignPanel used an undefined `styles.grid` and non-matching CSS class, so its 2-column layout silently collapsed — sidebar inputs and results panel overlapped, making controls (including the Re-Analyse button) unreachable on some clicks',
+    'Switched to the same `styles.layout` + `.layout` class used by Simulate tab, which has proper responsive breakpoints and a real `display: grid`',
   ],
 };
 
@@ -1975,7 +1975,7 @@ function DesignPanel() {
   };
 
   return (
-    <div style={{...styles.grid, gridTemplateColumns: '380px 1fr'}} className="grid">
+    <div style={{...styles.layout, gridTemplateColumns: '380px 1fr'}} className="layout">
       <aside style={styles.controls} className="controls">
         <Section title="1 · Lifespan target">
           <Slider label="Target field life" value={targetYears} min={1} max={20} step={1}
