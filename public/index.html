@@ -10,6 +10,10 @@
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #0d0d0f; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(240, 173, 78, 0.6); }
+    50%      { box-shadow: 0 0 0 6px rgba(240, 173, 78, 0); }
+  }
   body {
     font-family: "IBM Plex Sans", -apple-system, system-ui, sans-serif;
     color: #e8e8e8;
@@ -1765,6 +1769,16 @@ function DesignPanel() {
   const [analysing, setAnalysing] = useState(false);
   const [results, setResults] = useState(null);
 
+  // Signature of current requirement inputs. Compared against results.signature
+  // to detect whether the displayed results are stale (i.e. inputs changed
+  // since last Analyse click). Stale state triggers a warning banner and a
+  // visual cue on the Analyse button.
+  const currentSignature = JSON.stringify({
+    targetYears, envMeanT, envYearAmp, envDayAmp,
+    backhaul, txFreq, shelfMonths, coverage,
+  });
+  const isStale = results && results.signature !== currentSignature;
+
   // Environment preset auto-populates temp sliders
   useEffect(() => {
     if (envPreset === 'custom') return;
@@ -1875,6 +1889,7 @@ function DesignPanel() {
         verdict, verdictColor, verdictHeadline, narrative,
         ranked, scatterData,
         targetYears, targetFreq: targetFreq.label, backhaul: bh.label,
+        signature: currentSignature,
       });
       setAnalysing(false);
     }, 50);
@@ -1935,9 +1950,18 @@ function DesignPanel() {
         </Section>
 
         <button onClick={runAnalysis} disabled={analysing}
-                style={{...styles.feedbackSubmit, width: '100%', padding: '12px 16px',
-                        fontSize: 12, marginTop: 8, opacity: analysing ? 0.5 : 1}}>
-          {analysing ? 'ANALYSING…' : '▶ ANALYSE DESIGN'}
+                style={{
+                  ...styles.feedbackSubmit, width: '100%', padding: '12px 16px',
+                  fontSize: 12, marginTop: 8,
+                  opacity: analysing ? 0.5 : 1,
+                  // Pulse-y amber when inputs have changed since last run, so it's
+                  // visually obvious the user needs to re-click to refresh results
+                  background: isStale ? '#f0ad4e' : (styles.feedbackSubmit.background || '#c97b4a'),
+                  animation: isStale ? 'pulse 1.8s ease-in-out infinite' : 'none',
+                }}>
+          {analysing
+            ? 'ANALYSING…'
+            : (isStale ? '▶ RE-ANALYSE (inputs changed)' : '▶ ANALYSE DESIGN')}
         </button>
       </aside>
 
@@ -1974,9 +1998,23 @@ function DesignPanel() {
 
         {results && (
           <>
-            <DesignVerdict results={results} />
-            <DesignRecommendations results={results} />
-            <DesignScatter results={results} targetYears={results.targetYears} />
+            {isStale && (
+              <div style={{
+                padding: '10px 16px', marginBottom: 12,
+                background: 'rgba(240, 173, 78, 0.12)',
+                border: '1px solid #f0ad4e',
+                color: '#f0ad4e',
+                fontSize: 12, fontFamily: '"IBM Plex Mono", monospace',
+                letterSpacing: '0.05em',
+              }}>
+                ⚠ INPUTS CHANGED — results below reflect the previous analysis. Click <strong>Re-Analyse</strong> to update.
+              </div>
+            )}
+            <div style={{opacity: isStale ? 0.55 : 1, transition: 'opacity 0.3s'}}>
+              <DesignVerdict results={results} />
+              <DesignRecommendations results={results} />
+              <DesignScatter results={results} targetYears={results.targetYears} />
+            </div>
           </>
         )}
       </main>
