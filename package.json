@@ -1,0 +1,20 @@
+{
+  "name": "ew-battery-sim",
+  "version": "3.8.0",
+  "description": "Eden Worth Li-SOCl2 battery simulator — hosted edition",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "AUTH_PASSWORD=devpass DB_PATH=./dev.db node --watch server/index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,32 @@
+# =============================================================================
+# Eden Worth Battery Simulator — docker-compose
+# Uses: port 3001 (free on your VPS per inspection)
+# Expects: Nginx Proxy Manager to proxy to this container
+# =============================================================================
+services:
+  battery-sim:
+    build: .
+    container_name: ew-battery-sim
+    restart: unless-stopped
+    # Pin to UID 1000 so the bind-mounted ./data dir (owned by ubuntu:ubuntu
+    # on most Hostinger/Ubuntu hosts) is writable by the container's user.
+    # Without this, better-sqlite3 hits SQLITE_CANTOPEN and the container
+    # crash-loops. Override by setting USER_UID/USER_GID env if needed.
+    user: "1000:1000"
+    # Bind to localhost only — Nginx Proxy Manager handles the public edge
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DB_PATH=/data/battery-sim.db
+      - AUTH_PASSWORD=${AUTH_PASSWORD}
+      - AUTH_SECRET=${AUTH_SECRET}
+    volumes:
+      - ./data:/data
+    networks:
+      - default
+
+networks:
+  default:
+    name: ew-battery-sim-net

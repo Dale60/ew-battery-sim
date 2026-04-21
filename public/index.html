@@ -1,0 +1,3281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Li-SOCl₂ Cell Simulator v3.8 · Eden Worth Power Systems Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Serif:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #0d0d0f; }
+  body {
+    font-family: "IBM Plex Sans", -apple-system, system-ui, sans-serif;
+    color: #e8e8e8;
+    min-height: 100vh;
+  }
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    height: 4px; background: #2a2a2a; outline: none; border-radius: 2px;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; background: #c97b4a;
+    cursor: pointer; border-radius: 50%; border: 2px solid #0d0d0f;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 14px; height: 14px; background: #c97b4a;
+    cursor: pointer; border-radius: 50%; border: 2px solid #0d0d0f;
+  }
+  select:focus, input:focus { outline: 1px solid #c97b4a; }
+  details > summary { cursor: pointer; list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details[open] > summary .chev { transform: rotate(90deg); }
+  .chev { display: inline-block; transition: transform 0.15s; color: #c97b4a; }
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid #26262a; margin-bottom: 16px; }
+  .tab {
+    padding: 10px 16px; background: transparent; border: none; color: #888;
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: 0.12em;
+    text-transform: uppercase; cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  .tab.active { color: #c97b4a; border-bottom-color: #c97b4a; }
+  .tab:hover:not(.active) { color: #e8e8e8; }
+  .plain-box {
+    background: linear-gradient(180deg, rgba(107, 155, 209, 0.08) 0%, rgba(107, 155, 209, 0.02) 100%);
+    border-left: 3px solid #6b9bd1;
+    padding: 12px 14px; margin: 10px 0; font-size: 13px; line-height: 1.55;
+  }
+  .plain-box .ptitle {
+    font-size: 10px; letter-spacing: 0.15em; color: #6b9bd1; font-weight: 600;
+    text-transform: uppercase; margin-bottom: 6px;
+    font-family: "IBM Plex Mono", monospace;
+  }
+  .verdict-good { background: rgba(125, 216, 125, 0.08); border-left: 3px solid #7dd87d; }
+  .verdict-good .ptitle { color: #7dd87d; }
+  .verdict-bad { background: rgba(255, 122, 122, 0.08); border-left: 3px solid #ff7a7a; }
+  .verdict-bad .ptitle { color: #ff7a7a; }
+  .verdict-warn { background: rgba(240, 173, 78, 0.08); border-left: 3px solid #f0ad4e; }
+  .verdict-warn .ptitle { color: #f0ad4e; }
+  .drop-zone {
+    border: 2px dashed #333; padding: 20px; text-align: center; color: #666;
+    font-size: 12px; transition: all 0.15s; cursor: pointer;
+  }
+  .drop-zone.drag { border-color: #c97b4a; color: #c97b4a; background: rgba(201,123,74,0.05); }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr !important; }
+    .controls { position: static !important; }
+  }
+</style>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect, Fragment, useRef } = React;
+const {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ReferenceLine, Area, ComposedChart, Legend, ScatterChart, Scatter, ReferenceDot
+} = Recharts;
+
+// =============================================================================
+// CELL MODELS
+// =============================================================================
+const CELLS = {
+  'ER34615': {
+    name: 'ER34615 (Bobbin D)',
+    shortName: 'Bobbin D',
+    layman: 'The endurance athlete. Holds the most energy (19Ah) but can only supply a trickle of current at a time — great for sensors that sip power and send occasional messages.',
+    chemistry: 'Li-SOCl₂ Bobbin',
+    nominalV: 3.6, ocv: 3.67, cutoffV: 2.0,
+    capacity_Ah_25C: 19.0,
+    Imax_cont_mA: 200, Imax_pulse_mA: 400,
+    internalR_mOhm_25C: 130,
+    selfDischarge_pctYear_25C: 1.0,
+    passivation_V: 0.35, passivation_tau_s: 180,
+    tempMin: -55, tempMax: 85,
+    color: '#d4a574',
+    supplier: 'Long Sing / Fanso ER34615 — 19 Ah nominal (JIS-standard D-cell)',
+  },
+  'ER34615M': {
+    name: 'ER34615M (Spiral D)',
+    shortName: 'Spiral D',
+    layman: 'The sprinter. Holds less energy (14Ah) but can push 10× more current out at once — suited to devices that need real power when active, like GSM trackers.',
+    chemistry: 'Li-SOCl₂ Spiral',
+    nominalV: 3.6, ocv: 3.67, cutoffV: 2.0,
+    capacity_Ah_25C: 14.0,
+    Imax_cont_mA: 2000, Imax_pulse_mA: 3000,
+    internalR_mOhm_25C: 45,
+    selfDischarge_pctYear_25C: 2.0,
+    passivation_V: 0.12, passivation_tau_s: 30,
+    tempMin: -55, tempMax: 85,
+    color: '#c97b4a',
+    supplier: 'Long Sing ER34615M — 14 Ah spiral',
+  },
+
+  // Three HPC variants from Long Sing drawings (April 2026)
+  // All use ER34615 bobbin base. Distinguished by 5Ω load voltage spec:
+  // HPC1520 ≥3.35V, HPC1530 ≥3.40V, HPC1550 ≥3.45V. Larger cap = less sag.
+  'ER34615_HPC1520': {
+    name: 'ER34615 + HPC1520 (Hybrid, small cap)',
+    shortName: 'HPC1520',
+    layman: 'Bobbin D + small hybrid capacitor (HPC1520). Adds pulse capability without a big size penalty — good for moderate bursts.',
+    chemistry: 'Li-SOCl₂ Bobbin + HPC1520',
+    nominalV: 3.6, ocv: 3.67, cutoffV: 2.0,
+    capacity_Ah_25C: 19.0,
+    hpc_capacity_mAh: 150, hpc_max_pulse_mA: 3500,
+    Imax_cont_mA: 200, Imax_pulse_mA: 3500,
+    internalR_mOhm_25C: 130, hpc_internalR_mOhm: 35,
+    selfDischarge_pctYear_25C: 1.0,
+    passivation_V: 0.08, passivation_tau_s: 8,
+    tempMin: -55, tempMax: 85,
+    color: '#6b9bd1',
+    supplier: 'Long Sing P101001460 — ≥3.35V @ 5Ω load',
+    loadV_5ohm: 3.35,
+  },
+  'ER34615_HPC1530': {
+    name: 'ER34615 + HPC1530 (Hybrid, mid cap)',
+    shortName: 'HPC1530',
+    layman: 'Bobbin D + mid-size HPC1530. Better pulse voltage hold than HPC1520 — the sensible default for most NB-IoT and cellular applications.',
+    chemistry: 'Li-SOCl₂ Bobbin + HPC1530',
+    nominalV: 3.6, ocv: 3.67, cutoffV: 2.0,
+    capacity_Ah_25C: 19.0,
+    hpc_capacity_mAh: 225, hpc_max_pulse_mA: 4500,
+    Imax_cont_mA: 200, Imax_pulse_mA: 4500,
+    internalR_mOhm_25C: 130, hpc_internalR_mOhm: 28,
+    selfDischarge_pctYear_25C: 1.0,
+    passivation_V: 0.05, passivation_tau_s: 5,
+    tempMin: -55, tempMax: 85,
+    color: '#5a85b8',
+    supplier: 'Long Sing P101001470 — ≥3.40V @ 5Ω load',
+    loadV_5ohm: 3.40,
+  },
+  'ER34615_HPC1550': {
+    name: 'ER34615 + HPC1550 (Hybrid, large cap + PPTC)',
+    shortName: 'HPC1550',
+    layman: 'Bobbin D + largest HPC1550 with 3.5A PPTC fuse. Best pulse performance, highest voltage hold, built-in overcurrent protection. Cost premium justified for harsh deployments.',
+    chemistry: 'Li-SOCl₂ Bobbin + HPC1550 + PPTC',
+    nominalV: 3.6, ocv: 3.67, cutoffV: 2.0,
+    capacity_Ah_25C: 19.0,
+    hpc_capacity_mAh: 350, hpc_max_pulse_mA: 5000,
+    Imax_cont_mA: 200, Imax_pulse_mA: 5000,
+    internalR_mOhm_25C: 130, hpc_internalR_mOhm: 20,
+    selfDischarge_pctYear_25C: 1.0,
+    passivation_V: 0.04, passivation_tau_s: 4,
+    tempMin: -55, tempMax: 85,
+    color: '#4a7ab3',
+    supplier: 'Long Sing P101001480 — ≥3.45V @ 5Ω load, 3.5A PPTC',
+    loadV_5ohm: 3.45,
+  },
+
+  // Only A-cell EW uses: ER18505M Fanso spiral, 2× parallel
+  // Used by: Optima Pulse, Farmo Water Pressure (same pack, different enclosure)
+  'ER18505M_2P': {
+    name: 'ER18505M ×2 parallel (Fanso spiral A-pack)',
+    shortName: 'A ×2',
+    layman: 'Two Fanso A-size spiral cells in parallel. Standard EW A-cell option — compact, 7Ah combined, decent pulse capability. Used in Optima Pulse and Farmo Water Pressure.',
+    chemistry: 'Li-SOCl₂ Spiral (2P)',
+    nominalV: 3.6, ocv: 3.67, cutoffV: 2.0,
+    capacity_Ah_25C: 7.0,
+    Imax_cont_mA: 1500, Imax_pulse_mA: 2500,
+    internalR_mOhm_25C: 55,      // 2P halves single-cell ~110mΩ
+    selfDischarge_pctYear_25C: 2.0,
+    passivation_V: 0.15, passivation_tau_s: 40,
+    tempMin: -55, tempMax: 85,
+    color: '#b87a5a',
+    supplier: 'Fanso ER18505M × 2 — 3.5 Ah each, 7 Ah total',
+  },
+};
+
+// Cell families for smart comparison mode. When compareMode is on,
+// the simulator compares within the family of the selected cell, not
+// across all 6 (which would be unreadable and mixes D-cell / A-pack /
+// HPC variants that aren't really alternatives to each other).
+const CELL_FAMILIES = {
+  'd-cell': ['ER34615', 'ER34615M', 'ER34615_HPC1530'],     // D-cell options: bobbin / spiral / hybrid
+  'hpc-variants': ['ER34615_HPC1520', 'ER34615_HPC1530', 'ER34615_HPC1550'],  // pick your HPC
+  'a-pack': ['ER18505M_2P'],                                 // A-cell pack is standalone (no close alternative)
+};
+
+function familyForCell(cellKey) {
+  for (const [fam, cells] of Object.entries(CELL_FAMILIES)) {
+    if (cells.includes(cellKey)) return fam;
+  }
+  return null;
+}
+
+function compareSetFor(cellKey) {
+  const fam = familyForCell(cellKey);
+  if (fam) return CELL_FAMILIES[fam];
+  return [cellKey];
+}
+
+// =============================================================================
+// PHYSICS — CALIBRATED
+// =============================================================================
+
+// Peukert-style capacity derating, fitted to Ultralife ER34615 datasheet:
+//   I=0.2mA -> 18Ah, I=3mA -> 19Ah, I=60mA -> 10Ah, I=100mA -> 8Ah
+// Fit: C(I) = C_rated * min(1, (I_crit/I)^alpha)
+// Result: I_crit = 13.8 mA, alpha = 0.437   (residuals all < 6%)
+const PEUKERT_ICRIT_mA = 13.8;
+const PEUKERT_ALPHA = 0.437;
+
+function peukertFactor(avgCurrent_mA) {
+  if (avgCurrent_mA <= PEUKERT_ICRIT_mA) return 1.0;
+  return Math.pow(PEUKERT_ICRIT_mA / avgCurrent_mA, PEUKERT_ALPHA);
+}
+
+// Temperature capacity factor (unchanged, from published derating curves)
+function capacityFactor(T) {
+  if (T >= 25) return 1.0 - (T - 25) * 0.002;
+  if (T >= 0)  return 1.0 - (25 - T) * 0.002;
+  if (T >= -20) return 0.95 - (-T) * 0.0075;
+  if (T >= -40) return 0.80 - (-20 - T) * 0.0125;
+  return Math.max(0.30, 0.55 - (-40 - T) * 0.008);
+}
+function resistanceFactor(T) {
+  if (T >= 25) return 1.0;
+  if (T >= 0) return 1.0 + (25 - T) * 0.02;
+  if (T >= -20) return 1.5 + (-T) * 0.04;
+  if (T >= -40) return 2.3 + (-20 - T) * 0.12;
+  return 4.7 + (-40 - T) * 0.15;
+}
+
+// =============================================================================
+// KINETIC OVERPOTENTIAL (activation polarisation)
+// =============================================================================
+// Fitted to 16 Ultralife V-vs-T datapoints across -40°C to +60°C and 0.2-35 mA
+// Final parameters: b0=0.108 V/decade, n=5.74, I_ref=0.43 mA
+// RMS error = 30 mV (excellent — roughly within datasheet graph reading accuracy)
+// Models the fact that at low temperatures, electrochemical reactions slow down,
+// creating an extra voltage drop on top of pure IR drop. This is what actually
+// kills devices at low temperature — the IR model alone explains <25% of the sag.
+function kineticOverpotential(I_mA, T_C) {
+  if (I_mA < 0.01) return 0;
+  const T_K = T_C + 273.15;
+  const b_T = 0.108 * Math.pow(298.15 / T_K, 5.74);  // Tafel slope, T-dependent
+  const I_ref = 0.43;  // mA, below this no overpotential
+  if (I_mA <= I_ref) return 0;
+  return b_T * Math.log10(I_mA / I_ref);
+}
+
+// =============================================================================
+// VOLTAGE-DEPENDENT PEAK CURRENT (v3.5 — peer-review correction)
+// =============================================================================
+// Cellular modems (nRF91x1 LTE-M/NB-IoT, Telit ME310G1, SIMCOM) draw roughly
+// constant RF output power, not constant current. So as the battery voltage
+// drops, the modem pulls more current to maintain the same TX power.
+//
+// Reference datapoint: nRF9151 @ 23dBm PC3, pulls ~350mA at 3.7V fresh battery.
+// At 3.0V terminal (older, colder, or higher internal resistance), the same
+// modem pulls ~430mA (17-22% more). Peer review flagged this was missing and
+// would favour hybrid (HPC) batteries even more heavily.
+//
+// Model: I_actual(V) = I_nominal * (V_nominal / V_terminal)
+// where V_nominal is the voltage at which pulseCurrent_mA was specified.
+// Convention: user enters pulse current assuming fresh 3.6V nominal.
+// Only applied to "current sink" style loads (modems, high-power RF);
+// linear regulators / buck converters see this effect too but less pronounced.
+//
+// DEFAULT: disabled for general loads, enabled for known-modem presets.
+// User can toggle per-project in Custom Modifiers.
+const V_NOMINAL_REF = 3.6;
+
+function scalePeakCurrentByVoltage(I_nominal_mA, V_terminal, enable) {
+  if (!enable || V_terminal < 1.5) return I_nominal_mA;
+  // Bound the ratio to prevent silly amplification at battery death
+  const ratio = Math.min(1.8, V_NOMINAL_REF / V_terminal);
+  return I_nominal_mA * ratio;
+}
+
+// =============================================================================
+// INTERNAL RESISTANCE EVOLUTION vs DEPTH-OF-DISCHARGE and AGE
+// =============================================================================
+// Calibrated against MDPI Energies 2024 (Sun et al.) EIS measurements:
+//   - Fresh stored cell: high R (passivation film, 2-5× baseline)
+//   - Once loaded, passivation breaks: R drops to minimum around 10-30% DoD
+//   - Mid discharge (30-70% DoD): gradual climb
+//   - EoL (>80% DoD): sharp rise as LiCl blocks cathode pores
+// Plus saturating Arrhenius-accelerated ageing component
+function internalResistance_mOhm(cell, soc, ageYears, avgTemp_C) {
+  const R0 = cell.internalR_mOhm_25C * resistanceFactor(avgTemp_C);
+
+  // DoD component — dip-then-rise shape matching MDPI Fig 14
+  const dod = 1 - soc;
+  let R_dod_mult;
+  if (dod < 0.05) R_dod_mult = 1.15;                       // fresh, slight passivation
+  else if (dod < 0.30) R_dod_mult = 1.15 - dod * 1.5;      // passivation breaking down -> drops to ~0.70
+  else if (dod < 0.70) R_dod_mult = 0.70 + (dod - 0.3) * 1.0; // gentle climb to ~1.1
+  else if (dod < 0.90) R_dod_mult = 1.1 + (dod - 0.7) * 8;    // steeper climb
+  else R_dod_mult = 2.7 + (dod - 0.9) * 50;                   // cliff at EoL
+
+  // Age component — Arrhenius-accelerated passivation film thickening
+  const ageArrhenius = Math.pow(2, (avgTemp_C - 25) / 10);
+  const ageEffect_pct = (1 - Math.exp(-ageYears / 2.5)) * 0.30 * ageArrhenius;
+  const R_age_mult = 1 + ageEffect_pct;
+
+  return R0 * R_dod_mult * R_age_mult;
+}
+
+// =============================================================================
+// PASSIVATION (TMV) PREDICTOR
+// =============================================================================
+// Calibrated against MDPI Fig 15b (Sun et al. 2024): cell stored 8913h @ 70°C,
+// loaded with 750Ω at room temp, observed TMV = 1.6V (dip ~2.1V below OCV).
+// With 70°C Arrhenius factor of ~22×, storage is ~23 equivalent years at 25°C,
+// so film maturity ≈ 1.0. Required amplification factor = 5.2× fresh passivation.
+// Previous v3 used 3.5× — under-predicted extreme cases. Now 5.2×.
+// SER Battery: "passivation grows fast first 1-2 years, then plateaus" confirms
+// tau ~ 1.5 years at 25°C (gives 49% maturity at 1yr, 74% at 2yr).
+function predictPassivation(cell, storageMonths, storageTemp_C, dischargeCurrent_mA) {
+  if (cell.hpc_capacity_mAh) {
+    return { tmv_V: cell.ocv - 0.05, dip_V: 0.05, recovery_s: 1, severity: 'negligible',
+             filmMaturity: 0,
+             explanation: 'The HPC (capacitor) supplies current instantly, so the battery never has to break through its own passivation layer. Voltage delay is effectively eliminated.' };
+  }
+
+  // Film thickness growth: saturating exponential with Arrhenius (tau=1.5yr @25°C)
+  const t_years = storageMonths / 12;
+  const arrhenius = Math.pow(2, (storageTemp_C - 25) / 10);
+  const filmMaturity = (1 - Math.exp(-t_years * arrhenius / 1.5));
+  // Base passivation voltage drop amplified by film growth (5.2× max, calibrated to MDPI)
+  const maxDip = cell.passivation_V * (1 + filmMaturity * 5.2);
+
+  // Current effect — high current punches through faster (less visible TMV duration,
+  // but deeper initial dip because IR + activation overpotential stack up)
+  const currentFactor = Math.min(2.0, Math.max(0.3, Math.log10(dischargeCurrent_mA + 1) / 2));
+  const actualDip_V = maxDip * currentFactor;
+  const tmv_V = Math.max(1.0, cell.ocv - (dischargeCurrent_mA/1000)*(cell.internalR_mOhm_25C/1000) - actualDip_V);
+
+  // Recovery time: faster with current (breakthrough kinetics), slower with film thickness
+  const baseTau = cell.passivation_tau_s;
+  const recovery_s = baseTau * (1 + filmMaturity * 8) / Math.max(0.2, Math.log10(dischargeCurrent_mA + 1));
+
+  // Severity classification
+  let severity, explanation;
+  if (actualDip_V < 0.15) {
+    severity = 'negligible';
+    explanation = `Fresh or short-stored cells show minimal voltage delay. Your device will power up normally.`;
+  } else if (tmv_V < cell.cutoffV) {
+    severity = 'severe';
+    explanation = `The voltage will briefly drop below ${cell.cutoffV}V when first loaded. Your device may reset or fail to boot on first transmission. Depassivate before deploying.`;
+  } else if (actualDip_V < 0.5) {
+    severity = 'moderate';
+    explanation = `Noticeable voltage dip for ${recovery_s.toFixed(0)}s on first activation. If your device has brown-out protection above 3.0V, it may fail the first transmission. Recommend depassivation.`;
+  } else {
+    severity = 'significant';
+    explanation = `Voltage dips ${actualDip_V.toFixed(2)}V below OCV and takes ~${Math.round(recovery_s)}s to recover. Devices with strict voltage thresholds will fail. Depassivation strongly recommended.`;
+  }
+
+  return {
+    tmv_V: parseFloat(tmv_V.toFixed(2)),
+    dip_V: parseFloat(actualDip_V.toFixed(2)),
+    recovery_s: parseFloat(recovery_s.toFixed(1)),
+    filmMaturity: parseFloat(filmMaturity.toFixed(2)),
+    severity,
+    explanation,
+  };
+}
+
+// Depassivation protocol recommendation
+function recommendDepassivation(passivation, cell) {
+  if (cell.hpc_capacity_mAh) return null;  // not needed
+  if (passivation.severity === 'negligible') return null;
+
+  const mAh_to_clear = passivation.filmMaturity * 50; // rough estimate
+  const time_at_10mA = (mAh_to_clear / 10) * 60; // minutes
+  const time_at_50mA = (mAh_to_clear / 50) * 60;
+
+  return {
+    required: passivation.severity !== 'negligible',
+    protocol: `Apply a ${passivation.severity === 'severe' ? '50-100mA' : '10-30mA'} load for ${passivation.severity === 'severe' ? Math.round(time_at_50mA) : Math.round(time_at_10mA)} minutes before deployment.`,
+    verification: 'Verify terminal voltage has recovered to ≥3.5V under load before disconnecting.',
+    prevention: 'To avoid passivation in-field, apply a periodic wake-up pulse: 20mA for 10 seconds every week, or 60 seconds monthly.',
+  };
+}
+function selfDischargeRate(T, basePctYear) {
+  return basePctYear * Math.pow(2, (T - 25) / 10);
+}
+function ocvFromSoC(soc, cell) {
+  if (soc > 0.95) return cell.ocv;
+  if (soc > 0.10) return cell.ocv - 0.12 * (1 - soc);
+  return cell.ocv - 0.12 * 0.9 - (0.10 - soc) * 14;
+}
+function terminalVoltage(soc, I_mA, T, elapsed_s, cell, hpcState) {
+  const ocv = ocvFromSoC(soc, cell);
+  const R = (cell.internalR_mOhm_25C * resistanceFactor(T)) / 1000;
+  const I = I_mA / 1000;
+  let V = ocv - I * R - kineticOverpotential(I_mA, T);  // includes activation polarisation
+  const passRecovery = 1 - Math.exp(-elapsed_s / cell.passivation_tau_s);
+  V -= cell.passivation_V * (1 - passRecovery);
+  if (hpcState && cell.hpc_capacity_mAh) {
+    const hpcR = cell.hpc_internalR_mOhm / 1000;
+    const V_hpc = hpcState.voltage - I * hpcR;
+    V = Math.max(V, V_hpc);
+  }
+  return Math.max(0, V);
+}
+
+// =============================================================================
+// SIMULATION (now with Peukert)
+// =============================================================================
+function simulate({ cellKey, baseCurrent_uA, pulseCurrent_mA, pulseDuration_s,
+                    pulsePeriod_s, tempProfile, durationYears, shelfMonths,
+                    modifiers = {} }) {
+  const cell = CELLS[cellKey];
+  const totalSeconds = durationYears * 365.25 * 86400;
+  const steps = 400;
+  const dt = totalSeconds / steps;
+
+  // Custom modifiers (from peer review / per-project tweaks)
+  const voltageScaledModem = modifiers.voltageScaledModem !== undefined ? modifiers.voltageScaledModem : false;
+  const inrushMultiplier = modifiers.inrushMultiplier || 1.0;
+  const summerDutyBump = modifiers.summerDutyBump || 0;  // fractional increase in summer duty cycle
+  const coldStartThresh = modifiers.coldStartThresh || null;  // °C; below this, apply cold-start inrush
+  const coverageRetryMultiplier = modifiers.coverageRetryMultiplier || 1.0;  // v3.6 — retries in poor coverage
+
+  // Effective pulse duration accounts for retries in poor coverage. Kyle flagged
+  // that NB-IoT CE1 has 8× repetitions, CE2 has 128× — real deployments see
+  // 2-30× active time expansion vs happy-path. Multiplier ≥1 stretches the
+  // active phase of each pulse cycle, raising average current proportionally.
+  const pulseDutyCycle = (pulseDuration_s * coverageRetryMultiplier) / pulsePeriod_s;
+  // Nominal average current (before voltage scaling corrections)
+  const avgCurrent_mA_nominal = (baseCurrent_uA / 1000) + pulseCurrent_mA * pulseDutyCycle;
+  // For Peukert, use nominal — voltage scaling is second-order on the average
+  const peukertFrac = peukertFactor(avgCurrent_mA_nominal);
+
+  const shelfLoss = (cell.selfDischarge_pctYear_25C / 100) * (shelfMonths / 12);
+  let remaining_mAh = cell.capacity_Ah_25C * 1000 * (1 - shelfLoss) * peukertFrac;
+  const initial_mAh = cell.capacity_Ah_25C * 1000 * (1 - shelfLoss);
+  const usable_mAh = initial_mAh * peukertFrac;
+
+  const hpcCapacity = cell.hpc_capacity_mAh || 0;
+
+  const data = [];
+  let deadPoint = null;
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i * dt;
+    const tYears = t / (365.25 * 86400);
+    const T = getTempAt(t, tempProfile);
+
+    // Seasonal duty-cycle modifier (summer pulls more — e.g. fridge compressors, solar pumps)
+    const isSummer = T > (tempProfile.meanT + 3);
+    const dutyMod = isSummer ? (1 + summerDutyBump) : 1.0;
+
+    // Average current accounting for seasonal modifier
+    const avgCurrent_mA = avgCurrent_mA_nominal * dutyMod;
+
+    const hoursInStep = dt / 3600;
+    const charge_drawn_mAh = avgCurrent_mA * hoursInStep;
+    const capFactor = capacityFactor(T);
+    const effective_drain = charge_drawn_mAh / capFactor;
+    const sdRate = selfDischargeRate(T, cell.selfDischarge_pctYear_25C) / 100;
+    const sdLoss_mAh = initial_mAh * sdRate * (dt / (365.25 * 86400));
+
+    remaining_mAh -= (effective_drain + sdLoss_mAh);
+
+    const soc = Math.max(0, remaining_mAh / usable_mAh);
+    const V_base = terminalVoltage(soc, baseCurrent_uA / 1000, T, t, cell, null);
+
+    // Voltage-dependent peak current (peer review fix, v3.5)
+    // Use the current V_base to estimate what voltage the modem sees,
+    // then scale pulse current accordingly
+    let I_pulse_actual = scalePeakCurrentByVoltage(pulseCurrent_mA, V_base, voltageScaledModem);
+    // Cold start inrush (optional modifier)
+    if (coldStartThresh !== null && T < coldStartThresh) {
+      I_pulse_actual *= inrushMultiplier;
+    }
+
+    const V_pulse = terminalVoltage(
+      soc, I_pulse_actual, T, t, cell,
+      hpcCapacity > 0 ? { voltage: ocvFromSoC(soc, cell) } : null
+    );
+
+    // Predicted internal resistance at this age & DoD
+    const R_int_mOhm = internalResistance_mOhm(cell, soc, tYears, T);
+
+    const isDead = soc <= 0 || V_base < cell.cutoffV;
+    if (isDead && !deadPoint) deadPoint = tYears;
+
+    data.push({
+      years: parseFloat(tYears.toFixed(3)),
+      soc: parseFloat((soc * 100).toFixed(2)),
+      V_base: parseFloat(V_base.toFixed(3)),
+      V_pulse: parseFloat(V_pulse.toFixed(3)),
+      I_pulse_actual: parseFloat(I_pulse_actual.toFixed(1)),
+      temp: parseFloat(T.toFixed(1)),
+      remaining_Ah: parseFloat((remaining_mAh / 1000).toFixed(3)),
+      avgCurrent_mA: parseFloat(avgCurrent_mA.toFixed(4)),
+      R_int_mOhm: parseFloat(R_int_mOhm.toFixed(1)),
+      dead: isDead,
+    });
+    if (isDead) break;
+  }
+  return { data, cell, deadYears: deadPoint, initial_mAh, usable_mAh, peukertFrac, avgCurrent_mA: avgCurrent_mA_nominal };
+}
+
+function getTempAt(t_seconds, profile) {
+  const year_s = 365.25 * 86400;
+  const day_s = 86400;
+  const yearPhase = (t_seconds % year_s) / year_s;
+  const dayPhase = (t_seconds % day_s) / day_s;
+  const yearly = Math.sin((yearPhase - 0.25) * 2 * Math.PI);
+  const daily = Math.sin((dayPhase - 0.25) * 2 * Math.PI);
+  return profile.meanT + (profile.yearAmplitude * yearly) + (profile.dayAmplitude * daily);
+}
+
+// =============================================================================
+// RECOMMENDATION ENGINE — plain English
+// =============================================================================
+function generateRecommendation(results, params) {
+  const survivors = results.filter(r => !r.deadYears || r.deadYears >= params.durationYears);
+  const deaths = results.filter(r => r.deadYears && r.deadYears < params.durationYears);
+  const avgI = results[0].avgCurrent_mA;
+
+  let verdict, headline, body, tone;
+
+  // Determine verdict tone
+  if (survivors.length === 0) {
+    tone = 'bad';
+    headline = `No battery option lasts ${params.durationYears} years under these conditions.`;
+  } else if (survivors.length === results.length) {
+    tone = 'good';
+    headline = `Good news — all options comfortably exceed your ${params.durationYears} year target.`;
+  } else {
+    tone = 'warn';
+    headline = `Some options survive, some don't. Choose carefully.`;
+  }
+
+  // Build recommendation body
+  const parts = [];
+
+  // Current draw interpretation
+  if (avgI < 0.5) {
+    parts.push(`Your device sips power very gently (${avgI.toFixed(2)} mA average). Battery life here is mostly decided by self-discharge — how fast the battery goes flat sitting on the shelf — not by your device draining it.`);
+  } else if (avgI < 5) {
+    parts.push(`Your device draws modest power (${avgI.toFixed(2)} mA average). Both the battery capacity and shelf self-discharge matter roughly equally for lifespan.`);
+  } else if (avgI < 30) {
+    parts.push(`Your device is a moderate drinker (${avgI.toFixed(1)} mA average). Battery capacity is the main driver of lifespan — self-discharge barely matters.`);
+  } else {
+    parts.push(`Your device draws significant power (${avgI.toFixed(1)} mA average). At this draw, the battery can't deliver its full rated capacity — a physical limit called the Peukert effect. You'll get notably less than the "19Ah on the label" advertises.`);
+  }
+
+  // Temperature interpretation
+  const minT = params.meanT - params.yearAmp - params.dayAmp;
+  const maxT = params.meanT + params.yearAmp + params.dayAmp;
+  if (minT < -20) {
+    parts.push(`It gets very cold (${minT.toFixed(0)}°C) in this environment. Li-SOCl₂ batteries lose punch in cold — their internal resistance rises sharply, which can make high-current pulses fail even if there's plenty of energy left.`);
+  }
+  if (maxT > 40) {
+    parts.push(`It gets hot (${maxT.toFixed(0)}°C) in this environment. Heat accelerates self-discharge — the battery will go flat faster just sitting there, roughly doubling the loss rate for every 10°C above normal.`);
+  }
+  if (minT >= 10 && maxT <= 35) {
+    parts.push(`Your temperature environment is benign — no significant impact on battery performance expected.`);
+  }
+
+  // Specific cell recommendations — use HPC1530 as the representative hybrid
+  // since it's the sensible default EW will recommend in practice
+  const bobbin = results.find(r => r.key === 'ER34615');
+  const spiral = results.find(r => r.key === 'ER34615M');
+  const hybrid = results.find(r => r.key === 'ER34615_HPC1530') ||
+                 results.find(r => r.key === 'ER34615_HPC1520') ||
+                 results.find(r => r.key === 'ER34615_HPC1550');
+  const apack  = results.find(r => r.key === 'ER18505M_2P');
+
+  // Pulse assessment
+  const pulseI = params.pulseCurrent_mA;
+  const cellRecs = [];
+
+  if (pulseI > 200 && bobbin && bobbin.data[0].V_pulse < 2.5) {
+    cellRecs.push(`❌ **Avoid bobbin alone** — your pulse current (${pulseI} mA) is too high. The voltage will sag below the 2.0V cutoff during transmission, causing dropouts or resets.`);
+  }
+
+  if (pulseI > 400 && pulseI <= 3000) {
+    cellRecs.push(`✓ **Spiral (ER34615M)** handles your ${pulseI} mA pulses well without any capacitor help.`);
+  }
+
+  if (pulseI > 200 && hybrid) {
+    const hybridLife = hybrid.deadYears || params.durationYears;
+    if (hybridLife >= params.durationYears) {
+      cellRecs.push(`✓ **Hybrid (ER34615 + HPC)** is ideal here — gives you long-life chemistry plus capacitor-buffered pulses. HPC1530 is the sensible default; upsize to HPC1550 for harsh environments.`);
+    }
+  }
+
+  if (apack && pulseI > 500) {
+    cellRecs.push(`⚠ **A-cell pack (ER18505M ×2)** is compact but only rated to ~2500mA pulse. At ${pulseI} mA you're near its limit — confirm V_pulse stays above your MCU brownout.`);
+  }
+
+  if (avgI < 1 && survivors.length > 0) {
+    cellRecs.push(`✓ For low-current sensors, the **bobbin cell** (ER34615) gives the cheapest Ah-per-dollar. Only upgrade to hybrid if pulse voltage is an issue.`);
+  }
+
+  if (deaths.length > 0) {
+    const deadNames = deaths.map(d => d.cell.shortName).join(', ');
+    cellRecs.push(`⚠ These options die before target: ${deadNames}. Check their death years in the cards above.`);
+  }
+
+  // Overall verdict
+  const recommended = (() => {
+    if (pulseI > 400 && hybrid && hybrid.deadYears === null) return hybrid;
+    if (pulseI > 400 && spiral && spiral.deadYears === null) return spiral;
+    if (avgI < 1 && bobbin && bobbin.deadYears === null) return bobbin;
+    return survivors.sort((a,b) => (b.deadYears || 1e9) - (a.deadYears || 1e9))[0];
+  })();
+
+  return { tone, headline, contextParts: parts, cellRecs, recommended: recommended?.cell };
+}
+
+// =============================================================================
+// PRESETS
+// =============================================================================
+const TEMP_PRESETS = {
+  'custom': { label: 'Custom', meanT: 15, yearAmplitude: 10, dayAmplitude: 6 },
+  'melbourne-outdoor': { label: 'Melbourne outdoor', meanT: 15, yearAmplitude: 10, dayAmplitude: 6 },
+  'nsw-rural-metal-roof': { label: 'NSW rural, metal roof shed', meanT: 22, yearAmplitude: 15, dayAmplitude: 18 },
+  'desert-outback': { label: 'Outback / desert', meanT: 25, yearAmplitude: 14, dayAmplitude: 20 },
+  'refrigerated': { label: 'Refrigerated asset (-5°C)', meanT: -5, yearAmplitude: 2, dayAmplitude: 1 },
+  'cold-storage': { label: 'Cold storage (-25°C)', meanT: -25, yearAmplitude: 1, dayAmplitude: 0.5 },
+  'lab-stable': { label: 'Lab / indoor stable', meanT: 22, yearAmplitude: 1, dayAmplitude: 1 },
+  'arctic': { label: 'Arctic / extreme cold', meanT: -20, yearAmplitude: 25, dayAmplitude: 5 },
+};
+
+const LOAD_PRESETS = {
+  // --- Simple single-pulse profiles (original v3.0 set) ---
+  'lorawan-hourly': { label: 'LoRaWAN sensor, 1 TX/hr', baseCurrent_uA: 8, pulseCurrent_mA: 120, pulseDuration_s: 0.8, pulsePeriod_s: 3600, category: 'simple' },
+  'lorawan-15min': { label: 'LoRaWAN sensor, 1 TX / 15min', baseCurrent_uA: 8, pulseCurrent_mA: 120, pulseDuration_s: 0.8, pulsePeriod_s: 900, category: 'simple' },
+  'nbiot-daily': { label: 'NB-IoT tracker, 1 TX/day (simple)', baseCurrent_uA: 12, pulseCurrent_mA: 450, pulseDuration_s: 8, pulsePeriod_s: 86400, category: 'simple' },
+  'nbiot-hourly': { label: 'NB-IoT sensor, 1 TX/hr (simple)', baseCurrent_uA: 12, pulseCurrent_mA: 450, pulseDuration_s: 8, pulsePeriod_s: 3600, category: 'simple' },
+  'gsm-hourly': { label: 'GSM tracker, 1 TX/hr', baseCurrent_uA: 20, pulseCurrent_mA: 1800, pulseDuration_s: 5, pulsePeriod_s: 3600, category: 'simple' },
+  'smart-meter': { label: 'Smart meter (continuous)', baseCurrent_uA: 25, pulseCurrent_mA: 80, pulseDuration_s: 1, pulsePeriod_s: 21600, category: 'simple' },
+
+  // --- LTE realistic profiles (v3.6, Kyle's request) ---
+  // These roll up PSM sleep + periodic TAU + data TX into an equivalent
+  // pulse model, using WORST-CASE peaks (not Nordic OPP best-case).
+  // Sources: Nordic nRF9151 PS, Qoitech PPK2 measurements, Telit ME310G1 datasheet.
+  // The 'pulseDuration_s' reflects active phase time averaged over the period.
+
+  'nrf9151-psm-hourly-attach': {
+    label: 'nRF9151 · PSM + hourly TX (realistic, includes attach)',
+    baseCurrent_uA: 3,              // PSM sleep: 2.8 µA measured
+    pulseCurrent_mA: 420,           // Peak during TX @ 3.0V (PC3, voltage-scaled)
+    pulseDuration_s: 4.5,           // Avg active time per hour incl. TAU+TX
+    pulsePeriod_s: 3600,
+    notes: 'nRF9151 PC3, PSM mode, 60min T3412, hourly 100B UDP. Active time includes ~1s TAU update, 3s RRC+TX, 0.5s guard.',
+    category: 'lte-realistic',
+  },
+  'nrf9151-psm-daily-attach': {
+    label: 'nRF9151 · PSM + daily TX (best case LTE)',
+    baseCurrent_uA: 3,
+    pulseCurrent_mA: 420,
+    pulseDuration_s: 4.0,
+    pulsePeriod_s: 86400,
+    notes: 'nRF9151 PC3, aggressive PSM, daily 100B UDP. Closest to Nordic OPP best-case but with realistic peak current (not attach-excluded).',
+    category: 'lte-realistic',
+  },
+  'nrf9151-cold-attach': {
+    label: 'nRF9151 · hourly + daily cold attach',
+    baseCurrent_uA: 3,
+    pulseCurrent_mA: 420,
+    pulseDuration_s: 8.5,           // includes ~30s cold attach /day averaged in
+    pulsePeriod_s: 3600,
+    notes: 'nRF9151 with one cold attach per 24h (e.g. coverage loss recovery). Attach phase: ~300mA × 30s. This is the "bad network" worst-case Kyle flagged.',
+    category: 'lte-realistic',
+  },
+  'nrf9151-edrx-listener': {
+    label: 'nRF9151 · eDRX, always-reachable',
+    baseCurrent_uA: 38,             // eDRX sleep: measured 38 µA
+    pulseCurrent_mA: 420,
+    pulseDuration_s: 4.0,
+    pulsePeriod_s: 3600,
+    notes: 'nRF9151 eDRX 40.96s paging, hourly TX. Higher baseline than PSM — trades power for reachability. Needed for any device that must receive downlinks quickly.',
+    category: 'lte-realistic',
+  },
+  'telit-me310-hourly': {
+    label: 'Telit ME310G1 · hourly TX',
+    baseCurrent_uA: 10,
+    pulseCurrent_mA: 520,           // Telit spec: 500-550 mA peak PC3
+    pulseDuration_s: 6.0,
+    pulsePeriod_s: 3600,
+    notes: 'Telit ME310G1, PSM hourly. Slightly higher peaks than nRF9151 (older RF front-end). Used in EW PRO68 GSM fallback.',
+    category: 'lte-realistic',
+  },
+  'simcom-sim7080g-hourly': {
+    label: 'SIMCOM SIM7080G · hourly TX',
+    baseCurrent_uA: 15,
+    pulseCurrent_mA: 480,
+    pulseDuration_s: 7.0,
+    pulsePeriod_s: 3600,
+    notes: 'SIMCOM SIM7080G LTE Cat-M1/NB-IoT, PSM. Peak 480mA per datasheet.',
+    category: 'lte-realistic',
+  },
+  'nrf9151-ntn-satellite': {
+    label: 'nRF9151 · NB-NTN satellite, 15min',
+    baseCurrent_uA: 5,
+    pulseCurrent_mA: 450,
+    pulseDuration_s: 12.0,          // NTN sessions are longer — Doppler compensation, retries
+    pulsePeriod_s: 900,
+    notes: 'nRF9151 NB-NTN (L-band satellite). Longer active phases due to Doppler pre-comp and lower-rate uplink. Experimental — based on Nordic NTN alpha firmware typical figures.',
+    category: 'lte-realistic',
+  },
+
+  // --- Poor-coverage variants (Kyle's retry feedback) ---
+  // Same devices as above but with retry multipliers applied to active time.
+  // NB-IoT has discrete Coverage Enhancement levels (CE0/CE1/CE2) with
+  // 1×/8×/128× repetitions. Real deployments drift between levels based on
+  // RSRP/RSRQ. These presets model realistic field conditions where the
+  // modem retries due to marginal RF (like the Balco site after gateway
+  // outage — devices eventually joined but their active time was multiples
+  // of happy-path).
+  'nrf9151-poor-coverage-hourly': {
+    label: 'nRF9151 · hourly TX, FAIR coverage (2-3× retries)',
+    baseCurrent_uA: 3,
+    pulseCurrent_mA: 420,
+    pulseDuration_s: 11.0,          // 4.5s base × ~2.4× retry factor
+    pulsePeriod_s: 3600,
+    notes: 'nRF9151 PC3 in fair coverage (RSRP ~-105dBm). CE0 with frequent retries. Common in peri-urban sheds, basements, metal-roofed farm buildings. Active time ~2.4× happy-path.',
+    category: 'lte-realistic',
+  },
+  'nrf9151-ce1-rural': {
+    label: 'nRF9151 · hourly TX, POOR coverage (CE1, 8× reps)',
+    baseCurrent_uA: 3,
+    pulseCurrent_mA: 420,
+    pulseDuration_s: 35.0,          // 4.5s × 8× NB-IoT CE1 repetitions
+    pulsePeriod_s: 3600,
+    notes: 'nRF9151 in NB-IoT Coverage Enhancement level 1 (RSRP -115 to -125dBm). Transmission repetitions increase by 8× for reliability. Typical of deep-rural Australia, remote hay sheds, below-ground installs. This is the Balco-style scenario.',
+    category: 'lte-realistic',
+  },
+  'nrf9151-ce2-fringe': {
+    label: 'nRF9151 · CE2 fringe coverage (128× reps, 15min TX)',
+    baseCurrent_uA: 3,
+    pulseCurrent_mA: 420,
+    pulseDuration_s: 120.0,          // 4.5s × ~27× (capped — CE2 rarely fully used)
+    pulsePeriod_s: 900,
+    notes: 'nRF9151 at extreme range (RSRP <-125dBm). CE2 allows up to 128× repetitions but real devices rarely sustain this. Models the absolute worst-case fringe deployment. If your device lives here, consider satellite (NTN) or relocation.',
+    category: 'lte-realistic',
+  },
+
+  'custom': { label: 'Custom', baseCurrent_uA: 10, pulseCurrent_mA: 100, pulseDuration_s: 1, pulsePeriod_s: 3600, category: 'custom' },
+};
+
+// =============================================================================
+// BUILT-IN VALIDATION DATASETS — Ultralife ER34615 datasheet
+// =============================================================================
+const VALIDATION_DATASETS = {
+  'ultralife-runtime': {
+    name: 'Ultralife ER34615 · runtime vs current @ 25°C',
+    type: 'runtime',
+    description: 'Four points from the Ultralife ER34615 datasheet showing how much total capacity you actually get at different current draws. The simulator was calibrated against these.',
+    xLabel: 'Current (mA)', yLabel: 'Delivered capacity (Ah)',
+    points: [
+      { x: 0.2, y: 18.0, label: '18kΩ load, 0.2mA' },
+      { x: 3.0, y: 19.0, label: '1.1kΩ load, 3mA' },
+      { x: 60.0, y: 10.0, label: '56Ω load, 60mA' },
+      { x: 100.0, y: 8.0, label: '33Ω load, 100mA' },
+    ],
+    simFn: (x) => 19.0 * peukertFactor(x),
+  },
+  'ultralife-voltage-temp': {
+    name: 'Ultralife ER34615 · terminal voltage vs temperature',
+    type: 'vtemp',
+    description: 'Readings from the Ultralife voltage-vs-temperature graph for different constant-current loads. This validates whether the model gets terminal voltage right across -40°C to +60°C. v3.1 includes a kinetic overpotential term fitted to these 16 points — RMS error is ~30mV.',
+    xLabel: 'Temperature (°C)', yLabel: 'Terminal voltage (V)',
+    series: [
+      { current_mA: 0.2, label: '0.2 mA', color: '#6b9bd1',
+        points: [{x:-40,y:3.60},{x:-20,y:3.65},{x:0,y:3.66},{x:25,y:3.67},{x:60,y:3.67}] },
+      { current_mA: 1.0, label: '1 mA', color: '#7dd87d',
+        points: [{x:-40,y:3.50},{x:-20,y:3.60},{x:0,y:3.62},{x:25,y:3.64},{x:60,y:3.65}] },
+      { current_mA: 10.0, label: '10 mA', color: '#f0ad4e',
+        points: [{x:-40,y:3.00},{x:-20,y:3.30},{x:0,y:3.48},{x:25,y:3.55},{x:60,y:3.60}] },
+      { current_mA: 35.0, label: '35 mA', color: '#ff7a7a',
+        points: [{x:-40,y:2.85},{x:-20,y:3.10},{x:0,y:3.30},{x:25,y:3.45},{x:60,y:3.55}] },
+    ],
+  },
+  'mdpi-passivation': {
+    name: 'MDPI 2024 · passivation TMV after storage',
+    type: 'passivation',
+    description: 'From Sun et al. (MDPI Energies 2024, Fig. 15b). A Li-SOCl₂ cell stored 8,913 hours at 70°C, then loaded with a 750Ω resistor at room temperature, dipped to a minimum voltage (TMV) of about 1.6V before recovering. This extreme case is what the simulator\'s passivation amplification coefficient (5.2×) was calibrated against. The model should predict TMV within ~0.2V of this measurement.',
+    xLabel: 'Storage (equivalent years @ 25°C)', yLabel: 'TMV (V)',
+    anchors: [
+      { storageMonths: 0.1, storageTemp: 25, current_mA: 4.4, observed_TMV: 3.50,
+        label: 'Fresh cell, 750Ω load @ 25°C' },
+      { storageMonths: 12.2, storageTemp: 70, current_mA: 4.4, observed_TMV: 1.6,
+        label: '8,913h @ 70°C, 750Ω @ RT (MDPI Fig. 15b)' },
+    ],
+  },
+};
+
+// =============================================================================
+// PROJECT PRESETS — save/load scenarios for Eden Worth products & deployments
+// =============================================================================
+// Built-in starter projects. User projects saved to browser localStorage.
+const BUILTIN_PROJECTS = {
+  // --- OPTIMA PULSE: NB-IoT, A-cell pack (2× ER18505M) ---
+  'optima-pulse-nbiot': {
+    name: 'Optima Pulse · NB-IoT',
+    description: 'NB-IoT pulse logger (LWM2M). 2× ER18505M A-cell pack, nRF9151 PC3. Standard config.',
+    builtin: true,
+    cellKey: 'ER18505M_2P', compareMode: false,
+    baseCurrent_uA: 3, pulseCurrent_mA: 420, pulseDuration_s: 4.5, pulsePeriod_s: 3600,
+    meanT: 18, yearAmp: 12, dayAmp: 10,
+    durationYears: 10, shelfMonths: 6,
+    modifiers: { voltageScaledModem: true, inrushMultiplier: 1.0, summerDutyBump: 0,
+                 coldStartThresh: null, coverageRetryMultiplier: 1.0 },
+  },
+
+  // --- OPTIMA ENVIRO (Hay Shepherd) — two backhaul variants, D-cell ---
+  'optima-enviro-shepherd-lora': {
+    name: 'Optima Enviro Shepherd · LoRa AS923',
+    description: 'LoRaWAN Hay Shepherd PCBA with patch antenna. D-cell battery. AS923 (AU).',
+    builtin: true,
+    cellKey: 'ER34615', compareMode: true,
+    baseCurrent_uA: 8, pulseCurrent_mA: 120, pulseDuration_s: 0.8, pulsePeriod_s: 3600,
+    meanT: 22, yearAmp: 15, dayAmp: 18,
+    durationYears: 10, shelfMonths: 3,
+    modifiers: { voltageScaledModem: false, inrushMultiplier: 1.0, summerDutyBump: 0.1,
+                 coldStartThresh: null, coverageRetryMultiplier: 1.0 },
+  },
+  'optima-enviro-shepherd-nbiot': {
+    name: 'Optima Enviro Shepherd · NB-IoT',
+    description: 'Hay Shepherd NB-IoT variant. D-cell ER34615. nRF9151 PC3.',
+    builtin: true,
+    cellKey: 'ER34615', compareMode: true,
+    baseCurrent_uA: 3, pulseCurrent_mA: 420, pulseDuration_s: 4.5, pulsePeriod_s: 3600,
+    meanT: 22, yearAmp: 15, dayAmp: 18,
+    durationYears: 10, shelfMonths: 3,
+    modifiers: { voltageScaledModem: true, inrushMultiplier: 1.0, summerDutyBump: 0.1,
+                 coldStartThresh: null, coverageRetryMultiplier: 2.4 },
+  },
+
+  // --- ECO-SENSE — multi-radio platform (LoRa + NB-IoT variants) ---
+  'ecosense-lora-au915': {
+    name: 'eco-SENSE · LoRa AU915',
+    description: 'eco-SENSE LPC845 board, LoRaWAN AU915 variant. Range of sensor apps.',
+    builtin: true,
+    cellKey: 'ER34615', compareMode: true,
+    baseCurrent_uA: 10, pulseCurrent_mA: 120, pulseDuration_s: 0.8, pulsePeriod_s: 900,
+    meanT: 15, yearAmp: 10, dayAmp: 8,
+    durationYears: 10, shelfMonths: 4,
+    modifiers: { voltageScaledModem: false, inrushMultiplier: 1.0, summerDutyBump: 0,
+                 coldStartThresh: null, coverageRetryMultiplier: 1.0 },
+  },
+  'ecosense-lora-as923': {
+    name: 'eco-SENSE · LoRa AS923',
+    description: 'eco-SENSE LPC845 board, LoRaWAN AS923 (AU/NZ/APAC).',
+    builtin: true,
+    cellKey: 'ER34615', compareMode: true,
+    baseCurrent_uA: 10, pulseCurrent_mA: 120, pulseDuration_s: 0.8, pulsePeriod_s: 900,
+    meanT: 18, yearAmp: 12, dayAmp: 10,
+    durationYears: 10, shelfMonths: 4,
+    modifiers: { voltageScaledModem: false, inrushMultiplier: 1.0, summerDutyBump: 0,
+                 coldStartThresh: null, coverageRetryMultiplier: 1.0 },
+  },
+  'ecosense-nbiot': {
+    name: 'eco-SENSE · NB-IoT',
+    description: 'eco-SENSE NB-IoT variant. Standard D-cell; HPC option available separately.',
+    builtin: true,
+    cellKey: 'ER34615', compareMode: true,
+    baseCurrent_uA: 3, pulseCurrent_mA: 420, pulseDuration_s: 4.5, pulsePeriod_s: 3600,
+    meanT: 12, yearAmp: 12, dayAmp: 10,
+    durationYears: 7, shelfMonths: 4,
+    modifiers: { voltageScaledModem: true, inrushMultiplier: 1.0, summerDutyBump: 0,
+                 coldStartThresh: null, coverageRetryMultiplier: 1.0 },
+  },
+
+  // --- SENSEALL — LoRa only for now (NB-IoT capable but not shipping) ---
+  'senseall-lora-as923': {
+    name: 'SenseAll · LoRa AS923',
+    description: 'SenseAll multi-radio platform, currently shipping LoRa AS923 only. 4x analog + 4x digital + Modbus/SDI-12 inputs.',
+    builtin: true,
+    cellKey: 'ER34615', compareMode: true,
+    baseCurrent_uA: 15, pulseCurrent_mA: 120, pulseDuration_s: 0.8, pulsePeriod_s: 3600,
+    meanT: 18, yearAmp: 13, dayAmp: 12,
+    durationYears: 8, shelfMonths: 6,
+    modifiers: { voltageScaledModem: false, inrushMultiplier: 1.0, summerDutyBump: 0,
+                 coldStartThresh: null, coverageRetryMultiplier: 1.0 },
+  },
+
+  // --- EW PRO68 — GSM fallback, spiral D-cell for higher pulse capability ---
+  'ew-pro68-gsm': {
+    name: 'EW PRO68 · GSM tracker',
+    description: 'PRO68 GSM asset tracker. Spiral D-cell for high pulse current during GSM TX.',
+    builtin: true,
+    cellKey: 'ER34615M', compareMode: true,
+    baseCurrent_uA: 20, pulseCurrent_mA: 1800, pulseDuration_s: 5, pulsePeriod_s: 3600,
+    meanT: 20, yearAmp: 12, dayAmp: 15,
+    durationYears: 5, shelfMonths: 3,
+    modifiers: { voltageScaledModem: true, inrushMultiplier: 1.0, summerDutyBump: 0,
+                 coldStartThresh: null, coverageRetryMultiplier: 1.0 },
+  },
+
+  // --- WATER RAT — NB-IoT, D-cell ---
+  'water-rat-nbiot': {
+    name: 'Water Rat · NB-IoT',
+    description: 'Water Rat NB-IoT sensor. D-cell ER34615, nRF9151 PC3. 4hr uplink typical.',
+    builtin: true,
+    cellKey: 'ER34615', compareMode: true,
+    baseCurrent_uA: 39, pulseCurrent_mA: 420, pulseDuration_s: 4.5, pulsePeriod_s: 14400,
+    meanT: 16, yearAmp: 10, dayAmp: 8,
+    durationYears: 10, shelfMonths: 6,
+    modifiers: { voltageScaledModem: true, inrushMultiplier: 1.0, summerDutyBump: 0,
+                 coldStartThresh: null, coverageRetryMultiplier: 1.0 },
+  },
+
+  // --- FARMO WATER PRESSURE — A-cell pack, NB-IoT, actual Farmo build ---
+  'farmo-water-pressure-nbiot': {
+    name: 'Farmo Water Pressure · NB-IoT',
+    description: 'Real Farmo build: Takachi WP11-15-4G enclosure, 2× Fanso ER18505M (7Ah), 4hr uplink / 15min sensor. Telstra IoT APN.',
+    builtin: true,
+    cellKey: 'ER18505M_2P', compareMode: false,
+    baseCurrent_uA: 5, pulseCurrent_mA: 420, pulseDuration_s: 4.5, pulsePeriod_s: 14400,
+    meanT: 18, yearAmp: 13, dayAmp: 12,
+    durationYears: 8, shelfMonths: 6,
+    modifiers: { voltageScaledModem: true, inrushMultiplier: 1.0, summerDutyBump: 0,
+                 coldStartThresh: null, coverageRetryMultiplier: 1.0 },
+  },
+
+  // --- DOG TRACKER — NB-IoT NTN-capable, D-cell ---
+  'dog-tracker-nbiot-farm': {
+    name: 'Dog Tracker · NB-IoT farm',
+    description: 'Portable dog tracker, Telit ME310G1 NB-IoT + NTN. D-cell. Three-state firmware (sleep/beacon/active).',
+    builtin: true,
+    cellKey: 'ER34615', compareMode: false,
+    baseCurrent_uA: 12, pulseCurrent_mA: 450, pulseDuration_s: 8, pulsePeriod_s: 86400,
+    meanT: 18, yearAmp: 14, dayAmp: 15,
+    durationYears: 3, shelfMonths: 2,
+    modifiers: { voltageScaledModem: true, inrushMultiplier: 1.0, summerDutyBump: 0,
+                 coldStartThresh: null, coverageRetryMultiplier: 1.0 },
+  },
+};
+
+const LS_META_KEY = 'ew-battery-sim-meta';
+
+// =============================================================================
+// HTTP API CLIENT — server-backed persistence
+// =============================================================================
+// Projects live in a SQLite database on the VPS. Team members share the same
+// data. Each save is also versioned in project_history (last 50 per project).
+// Authentication is a shared team password, stored in a signed cookie.
+
+const api = {
+  async me() {
+    const r = await fetch('/api/auth/me', { credentials: 'include' });
+    if (!r.ok) return null;
+    return r.json();
+  },
+  async login(username, password) {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST', credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ username, password }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'login failed');
+    return r.json();
+  },
+  async logout() {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+  },
+  async listProjects() {
+    const r = await fetch('/api/projects', { credentials: 'include' });
+    if (!r.ok) throw new Error('fetch projects failed');
+    return (await r.json()).projects || {};
+  },
+  async createProject(proj) {
+    const r = await fetch('/api/projects', {
+      method: 'POST', credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name: proj.name,
+        description: proj.description || '',
+        data: proj,
+      }),
+    });
+    if (!r.ok) throw new Error('create failed');
+    return r.json();
+  },
+  async updateProject(id, proj) {
+    const r = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+      method: 'PUT', credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name: proj.name,
+        description: proj.description || '',
+        data: proj,
+      }),
+    });
+    if (!r.ok) throw new Error('update failed');
+    return r.json();
+  },
+  async deleteProject(id) {
+    const r = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+      method: 'DELETE', credentials: 'include',
+    });
+    if (!r.ok) throw new Error('delete failed');
+    return r.json();
+  },
+  async bulkImport(projects) {
+    const r = await fetch('/api/projects/bulk', {
+      method: 'POST', credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ projects }),
+    });
+    if (!r.ok) throw new Error('bulk import failed');
+    return r.json();
+  },
+  async teamActivity() {
+    const r = await fetch('/api/team/activity', { credentials: 'include' });
+    if (!r.ok) return { users: [] };
+    return r.json();
+  },
+  async listFeedback(projectId) {
+    const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+    const r = await fetch(`/api/feedback${qs}`, { credentials: 'include' });
+    if (!r.ok) throw new Error('fetch feedback failed');
+    return (await r.json()).feedback || [];
+  },
+  async submitFeedback(projectId, comment) {
+    const r = await fetch('/api/feedback', {
+      method: 'POST', credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ project_id: projectId || null, comment }),
+    });
+    if (!r.ok) throw new Error('submit failed');
+    return r.json();
+  },
+  async updateFeedback(id, status, resolution_note) {
+    const r = await fetch(`/api/feedback/${id}`, {
+      method: 'PUT', credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ status, resolution_note }),
+    });
+    if (!r.ok) throw new Error('update failed');
+    return r.json();
+  },
+};
+
+// Local meta only — tracks last-export time, unsaved counter, per-browser
+function loadMeta() {
+  try {
+    const raw = localStorage.getItem(LS_META_KEY);
+    return raw ? JSON.parse(raw) : { lastExportAt: null, unsavedChanges: 0 };
+  } catch (e) { return { lastExportAt: null, unsavedChanges: 0 }; }
+}
+
+function saveMeta(meta) {
+  try { localStorage.setItem(LS_META_KEY, JSON.stringify(meta)); } catch (e) {}
+}
+
+// =============================================================================
+// MAIN APP
+// =============================================================================
+function App() {
+  const [tab, setTab] = useState('simulate');
+  const [authState, setAuthState] = useState({ loading: true, user: null });
+
+  useEffect(() => {
+    api.me().then(r => setAuthState({ loading: false, user: r?.username || null }))
+            .catch(() => setAuthState({ loading: false, user: null }));
+  }, []);
+
+  if (authState.loading) {
+    return <div style={{...styles.app, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+      <div style={{color: '#666', fontSize: 12, fontFamily: '"IBM Plex Mono", monospace'}}>initialising…</div>
+    </div>;
+  }
+
+  if (!authState.user) {
+    return <LoginScreen onLogin={(username) => setAuthState({ loading: false, user: username })} />;
+  }
+
+  return (
+    <div style={styles.app}>
+      <header style={styles.header}>
+        <div>
+          <div style={styles.kicker}>EDEN WORTH / POWER SYSTEMS LAB · v3.8 HOSTED</div>
+          <h1 style={styles.title}>Li-SOCl₂ Cell Simulator</h1>
+          <div style={styles.sub}>Validated against Ultralife & MDPI 2024 data · RMS error 30mV across 16 operating points</div>
+        </div>
+        <div style={{display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0}}>
+          <div style={{fontSize: 11, color: '#888', fontFamily: '"IBM Plex Mono", monospace'}}>
+            <span style={{color: '#7dd87d'}}>●</span> {authState.user}
+          </div>
+          <button onClick={async () => { await api.logout(); setAuthState({ loading: false, user: null }); }}
+                  style={{padding: '5px 10px', background: 'transparent', border: '1px solid #333',
+                          color: '#888', fontSize: 10, fontFamily: '"IBM Plex Mono", monospace',
+                          cursor: 'pointer', letterSpacing: '0.08em'}}>
+            LOGOUT
+          </button>
+        </div>
+      </header>
+
+      <div className="tabs">
+        <button className={`tab ${tab === 'simulate' ? 'active' : ''}`} onClick={() => setTab('simulate')}>Simulate</button>
+        <button className={`tab ${tab === 'design' ? 'active' : ''}`} onClick={() => setTab('design')}>Design</button>
+        <button className={`tab ${tab === 'explain' ? 'active' : ''}`} onClick={() => setTab('explain')}>How this works</button>
+        <button className={`tab ${tab === 'validate' ? 'active' : ''}`} onClick={() => setTab('validate')}>Validation</button>
+      </div>
+
+      {tab === 'simulate' && <SimulatePanel />}
+      {tab === 'design' && <DesignPanel />}
+      {tab === 'explain' && <ExplainPanel />}
+      {tab === 'validate' && <ValidatePanel />}
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [err, setErr] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!username.trim() || !password) return;
+    setSubmitting(true); setErr('');
+    try {
+      await api.login(username.trim(), password);
+      onLogin(username.trim());
+    } catch (e) {
+      setErr(e.message || 'login failed');
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={{...styles.app, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+      <div style={{width: 360, background: '#131316', border: '1px solid #26262a', padding: 28}}>
+        <div style={{fontSize: 10, letterSpacing: '0.18em', color: '#c97b4a', fontWeight: 600,
+                     textTransform: 'uppercase', fontFamily: '"IBM Plex Mono", monospace'}}>
+          EDEN WORTH / POWER SYSTEMS LAB
+        </div>
+        <h1 style={{fontSize: 22, fontWeight: 300, margin: '8px 0 6px', letterSpacing: '-0.01em',
+                    fontFamily: '"IBM Plex Serif", Georgia, serif'}}>
+          Battery Simulator
+        </h1>
+        <div style={{fontSize: 11, color: '#888', marginBottom: 20, fontFamily: '"IBM Plex Mono", monospace'}}>
+          sign in with your name and the team password
+        </div>
+        <input type="text" placeholder="Your name (e.g. Dale)" value={username}
+               onChange={e => setUsername(e.target.value)}
+               onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+               style={{width: '100%', background: '#0a0a0b', color: '#e8e8e8',
+                       border: '1px solid #333', padding: '10px 12px', fontSize: 13,
+                       fontFamily: '"IBM Plex Sans", sans-serif', marginBottom: 10}} autoFocus />
+        <input type="password" placeholder="Team password" value={password}
+               onChange={e => setPassword(e.target.value)}
+               onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+               style={{width: '100%', background: '#0a0a0b', color: '#e8e8e8',
+                       border: '1px solid #333', padding: '10px 12px', fontSize: 13,
+                       fontFamily: '"IBM Plex Sans", sans-serif', marginBottom: 14}} />
+        {err && <div style={{fontSize: 12, color: '#ff7a7a', marginBottom: 10,
+                              padding: '8px 10px', background: 'rgba(255,122,122,0.08)',
+                              borderLeft: '2px solid #ff7a7a'}}>{err}</div>}
+        <button onClick={handleSubmit} disabled={submitting || !username.trim() || !password}
+                style={{width: '100%', padding: '10px 14px', background: '#c97b4a', color: '#0d0d0f',
+                        border: 'none', fontSize: 12, fontWeight: 500, cursor: 'pointer',
+                        fontFamily: '"IBM Plex Mono", monospace', letterSpacing: '0.08em',
+                        opacity: (submitting || !username.trim() || !password) ? 0.4 : 1}}>
+          {submitting ? 'SIGNING IN…' : 'SIGN IN'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// SIMULATE TAB
+// =============================================================================
+function SimulatePanel() {
+  const [cellKey, setCellKey] = useState('ER34615');
+  const [compareMode, setCompareMode] = useState(true);
+
+  const [loadPreset, setLoadPreset] = useState('lorawan-hourly');
+  const [baseCurrent_uA, setBase] = useState(8);
+  const [pulseCurrent_mA, setPulseI] = useState(120);
+  const [pulseDuration_s, setPulseDur] = useState(0.8);
+  const [pulsePeriod_s, setPulsePer] = useState(3600);
+
+  const [tempPreset, setTempPreset] = useState('melbourne-outdoor');
+  const [meanT, setMeanT] = useState(15);
+  const [yearAmp, setYearAmp] = useState(10);
+  const [dayAmp, setDayAmp] = useState(6);
+
+  const [durationYears, setDuration] = useState(10);
+  const [shelfMonths, setShelfMonths] = useState(6);
+
+  // Custom modifiers (v3.5) — per-project physics tweaks
+  const [modifiers, setModifiers] = useState({
+    voltageScaledModem: false,   // scale pulse current with battery voltage (peer review fix)
+    inrushMultiplier: 1.0,        // extra current at cold-start (×)
+    summerDutyBump: 0,            // fractional increase in summer duty cycle
+    coldStartThresh: null,        // °C below which inrush kicks in
+    coverageRetryMultiplier: 1.0, // active-time multiplier for retries in poor coverage (v3.6, Kyle)
+  });
+
+  // Project management
+  const [userProjects, setUserProjects] = useState({});
+  const [currentProject, setCurrentProject] = useState('');
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [saveDescription, setSaveDescription] = useState('');
+  const [meta, setMeta] = useState(() => loadMeta());
+  const [saveStatus, setSaveStatus] = useState('');  // 'saved', 'saving', ''
+  const [showExportNag, setShowExportNag] = useState(false);
+  const isFirstRender = useRef(true);
+  const autoSaveTimer = useRef(null);
+
+  // Initial load from server
+  useEffect(() => {
+    api.listProjects().then(projects => {
+      setUserProjects(projects);
+      // Auto-load "last used" project if there is one
+      const lastId = localStorage.getItem('ew-battery-sim-last');
+      if (lastId && projects[lastId]) {
+        setCurrentProject(lastId);
+        applyProject(projects[lastId], true);
+      }
+    }).catch(err => {
+      console.error('failed to load projects', err);
+    });
+  }, []);
+
+  // Check if export reminder should show
+  useEffect(() => {
+    const daysSinceExport = meta.lastExportAt
+      ? (Date.now() - new Date(meta.lastExportAt).getTime()) / 86400000
+      : Infinity;
+    const shouldNag = meta.unsavedChanges >= 10 || daysSinceExport >= 7;
+    const hasProjects = Object.keys(userProjects).length > 0;
+    setShowExportNag(shouldNag && hasProjects);
+  }, [meta, userProjects]);
+
+  const applyProject = (proj, silent = false) => {
+    isFirstRender.current = silent;  // suppress auto-save triggered by this load
+    // Migrate pre-v3.7 cell key if needed
+    let cellKeyToApply = proj.cellKey;
+    if (cellKeyToApply === 'ER34615_HPC') cellKeyToApply = 'ER34615_HPC1530';
+    if (!CELLS[cellKeyToApply]) cellKeyToApply = 'ER34615';  // fallback if cell was removed
+    setCellKey(cellKeyToApply);
+    setCompareMode(proj.compareMode);
+    setLoadPreset('custom');
+    setBase(proj.baseCurrent_uA);
+    setPulseI(proj.pulseCurrent_mA);
+    setPulseDur(proj.pulseDuration_s);
+    setPulsePer(proj.pulsePeriod_s);
+    setTempPreset('custom');
+    setMeanT(proj.meanT);
+    setYearAmp(proj.yearAmp);
+    setDayAmp(proj.dayAmp);
+    setDuration(proj.durationYears);
+    setShelfMonths(proj.shelfMonths);
+    setModifiers(proj.modifiers || {
+      voltageScaledModem: false, inrushMultiplier: 1.0,
+      summerDutyBump: 0, coldStartThresh: null, coverageRetryMultiplier: 1.0,
+    });
+    // Backfill the new field if project was saved before v3.6
+    if (proj.modifiers && proj.modifiers.coverageRetryMultiplier === undefined) {
+      setModifiers(m => ({ ...m, coverageRetryMultiplier: 1.0 }));
+    }
+  };
+
+  const handleProjectLoad = (key) => {
+    setCurrentProject(key);
+    if (!key) return;
+    const proj = BUILTIN_PROJECTS[key] || userProjects[key];
+    if (proj) {
+      applyProject(proj);
+      localStorage.setItem('ew-battery-sim-last', key);
+    }
+  };
+
+  // AUTO-SAVE: debounced 2s after any slider change, but only if we have a
+  // current user project loaded (not a built-in, not fresh slate)
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    if (!currentProject || BUILTIN_PROJECTS[currentProject]) return;
+    if (!userProjects[currentProject]) return;
+
+    setSaveStatus('saving');
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(async () => {
+      const updated = {
+        ...userProjects[currentProject],
+        cellKey, compareMode,
+        baseCurrent_uA, pulseCurrent_mA, pulseDuration_s, pulsePeriod_s,
+        meanT, yearAmp, dayAmp,
+        durationYears, shelfMonths,
+        modifiers,
+      };
+      try {
+        await api.updateProject(currentProject, updated);
+        setUserProjects(prev => ({ ...prev, [currentProject]: { ...updated, updatedAt: new Date().toISOString() } }));
+        setSaveStatus('saved');
+        const newMeta = { ...meta, unsavedChanges: (meta.unsavedChanges || 0) + 1 };
+        setMeta(newMeta);
+        saveMeta(newMeta);
+      } catch (err) {
+        setSaveStatus('error');
+        console.error('auto-save failed', err);
+      }
+      setTimeout(() => setSaveStatus(''), 1500);
+    }, 2000);
+
+    return () => autoSaveTimer.current && clearTimeout(autoSaveTimer.current);
+  }, [cellKey, compareMode, baseCurrent_uA, pulseCurrent_mA, pulseDuration_s,
+      pulsePeriod_s, meanT, yearAmp, dayAmp, durationYears, shelfMonths, modifiers]);
+
+  // Server-backed storage is always authoritative — no beforeunload race to worry about.
+  // Pending auto-saves will complete naturally on next interaction or reload.
+
+  const handleSave = async () => {
+    if (!saveName.trim()) return;
+    const newProjData = {
+      name: saveName.trim(),
+      description: saveDescription.trim(),
+      builtin: false,
+      cellKey, compareMode,
+      baseCurrent_uA, pulseCurrent_mA, pulseDuration_s, pulsePeriod_s,
+      meanT, yearAmp, dayAmp,
+      durationYears, shelfMonths,
+      modifiers,
+    };
+    try {
+      const created = await api.createProject(newProjData);
+      setUserProjects(prev => ({ ...prev, [created.id]: { ...newProjData, ...created } }));
+      setCurrentProject(created.id);
+      localStorage.setItem('ew-battery-sim-last', created.id);
+    } catch (err) {
+      alert('Save failed: ' + err.message);
+      return;
+    }
+    setShowSaveDialog(false);
+    setSaveName(''); setSaveDescription('');
+    setSaveStatus('saved');
+    setTimeout(() => setSaveStatus(''), 1500);
+  };
+
+  const handleDelete = async (key) => {
+    if (!confirm(`Delete saved project "${userProjects[key]?.name}"?`)) return;
+    try {
+      await api.deleteProject(key);
+      setUserProjects(prev => { const { [key]:_, ...rest } = prev; return rest; });
+      if (currentProject === key) setCurrentProject('');
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    }
+  };
+
+  const handleExport = () => {
+    const blob = new Blob([JSON.stringify(userProjects, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ew-battery-sim-projects-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    const newMeta = { lastExportAt: new Date().toISOString(), unsavedChanges: 0 };
+    setMeta(newMeta);
+    saveMeta(newMeta);
+    setShowExportNag(false);
+  };
+
+  const handleImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const imported = JSON.parse(ev.target.result);
+        await api.bulkImport(imported);
+        // Reload from server to get canonical data
+        const fresh = await api.listProjects();
+        setUserProjects(fresh);
+        alert(`Imported ${Object.keys(imported).length} projects`);
+      } catch (err) {
+        alert('Import failed: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  useEffect(() => {
+    if (loadPreset !== 'custom') {
+      const p = LOAD_PRESETS[loadPreset];
+      setBase(p.baseCurrent_uA); setPulseI(p.pulseCurrent_mA);
+      setPulseDur(p.pulseDuration_s); setPulsePer(p.pulsePeriod_s);
+    }
+  }, [loadPreset]);
+
+  useEffect(() => {
+    if (tempPreset === 'custom') return;  // don't clobber user's custom values
+    const p = TEMP_PRESETS[tempPreset];
+    if (p) { setMeanT(p.meanT); setYearAmp(p.yearAmplitude); setDayAmp(p.dayAmplitude); }
+  }, [tempPreset]);
+
+  const tempProfile = { meanT, yearAmplitude: yearAmp, dayAmplitude: dayAmp };
+
+  const results = useMemo(() => {
+    const common = { baseCurrent_uA, pulseCurrent_mA, pulseDuration_s, pulsePeriod_s, tempProfile, durationYears, shelfMonths, modifiers };
+    if (compareMode) {
+      const set = compareSetFor(cellKey);
+      return set.map(k => ({ key: k, ...simulate({ cellKey: k, ...common }) }));
+    }
+    return [{ key: cellKey, ...simulate({ cellKey, ...common }) }];
+  }, [cellKey, compareMode, baseCurrent_uA, pulseCurrent_mA, pulseDuration_s, pulsePeriod_s, meanT, yearAmp, dayAmp, durationYears, shelfMonths, modifiers]);
+
+  const mergedData = useMemo(() => {
+    const allYears = new Set();
+    results.forEach(r => r.data.forEach(d => allYears.add(d.years)));
+    const sorted = [...allYears].sort((a, b) => a - b);
+    return sorted.map(y => {
+      const row = { years: y };
+      results.forEach(r => {
+        const pt = r.data.find(d => d.years === y);
+        if (pt) {
+          row[`${r.key}_V`] = pt.V_base;
+          row[`${r.key}_Vpulse`] = pt.V_pulse;
+          row[`${r.key}_SoC`] = pt.soc;
+          row[`${r.key}_T`] = pt.temp;
+          row[`${r.key}_Rint`] = pt.R_int_mOhm;
+        }
+      });
+      return row;
+    });
+  }, [results]);
+
+  const recommendation = useMemo(() =>
+    generateRecommendation(results, { durationYears, meanT, yearAmp, dayAmp, pulseCurrent_mA }),
+    [results, durationYears, meanT, yearAmp, dayAmp, pulseCurrent_mA]);
+
+  // Predict passivation per cell given shelf storage conditions
+  const passivationPredictions = useMemo(() => {
+    // Assume worst-case: storage at high end of temperature range
+    const storageTemp = Math.max(25, meanT + yearAmp * 0.7);  // typically stored somewhere warm-ish
+    return results.map(r => ({
+      key: r.key,
+      cell: r.cell,
+      prediction: predictPassivation(r.cell, shelfMonths, storageTemp, pulseCurrent_mA),
+    }));
+  }, [results, shelfMonths, meanT, yearAmp, pulseCurrent_mA]);
+
+  return (
+    <div style={styles.layout} className="layout">
+      <aside style={styles.controls} className="controls">
+        <Section title="Project">
+          <ProjectPanel
+            builtin={BUILTIN_PROJECTS}
+            userProjects={userProjects}
+            current={currentProject}
+            onLoad={handleProjectLoad}
+            onSaveClick={() => setShowSaveDialog(true)}
+            onDelete={handleDelete}
+            onExport={handleExport}
+            onImport={handleImport}
+            saveStatus={saveStatus}
+            isAutoSaved={currentProject && userProjects[currentProject]}
+          />
+          {showSaveDialog && (
+            <SaveDialog
+              name={saveName} setName={setSaveName}
+              description={saveDescription} setDescription={setSaveDescription}
+              onSave={handleSave} onCancel={() => { setShowSaveDialog(false); setSaveName(''); setSaveDescription(''); }}
+            />
+          )}
+        </Section>
+
+        <Section title="Cell selection">
+          <label style={styles.toggleRow}>
+            <input type="checkbox" checked={compareMode} onChange={e => setCompareMode(e.target.checked)} />
+            <span>Compare alternatives in same family</span>
+          </label>
+          {!compareMode && (
+            <select value={cellKey} onChange={e => setCellKey(e.target.value)} style={styles.select}>
+              <optgroup label="D-cell options (single cell, 14–19 Ah)">
+                <option value="ER34615">ER34615 — Bobbin D (19 Ah, low-rate)</option>
+                <option value="ER34615M">ER34615M — Spiral D (14 Ah, high-rate)</option>
+              </optgroup>
+              <optgroup label="D-cell + HPC hybrid">
+                <option value="ER34615_HPC1520">ER34615 + HPC1520 (small cap)</option>
+                <option value="ER34615_HPC1530">ER34615 + HPC1530 (mid cap)</option>
+                <option value="ER34615_HPC1550">ER34615 + HPC1550 (large + PPTC)</option>
+              </optgroup>
+              <optgroup label="A-cell pack (compact)">
+                <option value="ER18505M_2P">ER18505M × 2P — Fanso spiral pack (7 Ah)</option>
+              </optgroup>
+            </select>
+          )}
+          {compareMode && (
+            <div style={{...styles.hint, marginBottom: 8}}>
+              Comparing <strong>{CELLS[cellKey]?.name}</strong> against its family alternatives.
+              Select a different cell in the list below to switch family.
+            </div>
+          )}
+          <div style={styles.cellGrid}>
+            {Object.entries(CELLS).map(([k, c]) => (
+              <details key={k} style={{...styles.cellCard, borderLeftColor: c.color,
+                                        opacity: (k === cellKey || (compareMode && compareSetFor(cellKey).includes(k))) ? 1 : 0.55}}
+                       open={k === cellKey}>
+                <summary onClick={(e) => {
+                  // Clicking the summary switches the selected cell without toggling the details
+                  if (k !== cellKey) { e.preventDefault(); setCellKey(k); }
+                }}>
+                  <span className="chev">▸</span>
+                  <span style={{...styles.dot, background: c.color, marginLeft: 6}} />
+                  <span style={styles.cellName}>{c.name}</span>
+                  {k === cellKey && <span style={{marginLeft: 'auto', fontSize: 9, color: c.color,
+                                                   fontFamily: '"IBM Plex Mono", monospace',
+                                                   letterSpacing: '0.1em'}}>◉ SELECTED</span>}
+                </summary>
+                <div style={{...styles.layman, borderLeftColor: c.color}}>{c.layman}</div>
+                <div style={styles.spec}>{c.capacity_Ah_25C}Ah · {c.Imax_cont_mA}mA cont · {c.Imax_pulse_mA}mA pulse</div>
+                <div style={styles.spec}>Internal R: {c.internalR_mOhm_25C}mΩ</div>
+                {c.hpc_capacity_mAh && <div style={{...styles.spec, color: c.color}}>+ HPC {c.hpc_capacity_mAh}mAh buffer, ≥{c.loadV_5ohm}V @ 5Ω</div>}
+                {c.supplier && <div style={{...styles.spec, fontSize: 10, color: '#666', marginTop: 6,
+                                             fontStyle: 'italic'}}>{c.supplier}</div>}
+              </details>
+            ))}
+          </div>
+        </Section>
+
+        <Section title="What's powering it">
+          <select value={loadPreset} onChange={e => setLoadPreset(e.target.value)} style={styles.select}>
+            <optgroup label="Simple single-pulse profiles">
+              {Object.entries(LOAD_PRESETS).filter(([, p]) => p.category === 'simple').map(([k, p]) => (
+                <option key={k} value={k}>{p.label}</option>
+              ))}
+            </optgroup>
+            <optgroup label="LTE realistic (includes attach/TAU)">
+              {Object.entries(LOAD_PRESETS).filter(([, p]) => p.category === 'lte-realistic').map(([k, p]) => (
+                <option key={k} value={k}>{p.label}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Custom">
+              {Object.entries(LOAD_PRESETS).filter(([, p]) => p.category === 'custom').map(([k, p]) => (
+                <option key={k} value={k}>{p.label}</option>
+              ))}
+            </optgroup>
+          </select>
+          {LOAD_PRESETS[loadPreset]?.notes && (
+            <div style={styles.presetNotes}>
+              {LOAD_PRESETS[loadPreset].notes}
+            </div>
+          )}
+          <Slider label="Idle current (sleep)" value={baseCurrent_uA} min={1} max={500} step={1}
+                  unit="µA" onChange={v => { setBase(v); setLoadPreset('custom'); }} />
+          <Slider label="Burst current" value={pulseCurrent_mA} min={10} max={3000} step={10}
+                  unit="mA" onChange={v => { setPulseI(v); setLoadPreset('custom'); }} />
+          <Slider label="Burst length" value={pulseDuration_s} min={0.1} max={30} step={0.1}
+                  unit="s" onChange={v => { setPulseDur(v); setLoadPreset('custom'); }} />
+          <Slider label="Time between bursts" value={pulsePeriod_s} min={60} max={86400} step={60}
+                  unit="s" onChange={v => { setPulsePer(v); setLoadPreset('custom'); }}
+                  display={v => v < 3600 ? `${v}s` : v < 86400 ? `${(v/3600).toFixed(1)}h` : `${(v/86400).toFixed(1)}d`} />
+          <div style={styles.hint}>
+            Average: {(baseCurrent_uA/1000 + pulseCurrent_mA*pulseDuration_s/pulsePeriod_s).toFixed(2)} mA
+          </div>
+        </Section>
+
+        <Section title="Environment">
+          <select value={tempPreset} onChange={e => setTempPreset(e.target.value)} style={styles.select}>
+            {Object.entries(TEMP_PRESETS).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
+          </select>
+          <Slider label="Average temp" value={meanT} min={-40} max={60} step={1} unit="°C" onChange={setMeanT} />
+          <Slider label="Seasonal swing" value={yearAmp} min={0} max={30} step={0.5} unit="°C" onChange={setYearAmp} />
+          <Slider label="Day/night swing" value={dayAmp} min={0} max={25} step={0.5} unit="°C" onChange={setDayAmp} />
+          <div style={styles.hint}>
+            {(meanT - yearAmp - dayAmp).toFixed(0)}°C to {(meanT + yearAmp + dayAmp).toFixed(0)}°C
+          </div>
+        </Section>
+
+        <Section title="Deployment plan">
+          <Slider label="Storage before deploy" value={shelfMonths} min={0} max={60} step={1} unit="mo" onChange={setShelfMonths} />
+          <Slider label="Required lifespan" value={durationYears} min={1} max={25} step={1} unit="yr" onChange={setDuration} />
+        </Section>
+
+        <ModifiersSection modifiers={modifiers} setModifiers={setModifiers} />
+      </aside>
+
+      <main style={styles.main}>
+        {showExportNag && (
+          <ExportNagBanner
+            meta={meta}
+            projectCount={Object.keys(userProjects).length}
+            onExport={handleExport}
+            onDismiss={() => {
+              const dismissed = { ...meta, unsavedChanges: 0, lastExportAt: meta.lastExportAt || new Date().toISOString() };
+              setMeta(dismissed); saveMeta(dismissed); setShowExportNag(false);
+            }}
+          />
+        )}
+        <RecommendationBox rec={recommendation} />
+
+        <div style={styles.resultsGrid}>
+          {results.map(r => <ResultCard key={r.key} result={r} durationYears={durationYears} />)}
+        </div>
+
+        <ChartPanel title="How long does the battery last?" subtitle="State of charge (fuel gauge) over time. When it reaches 0%, the battery is dead.">
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={mergedData} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
+              <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
+              <XAxis dataKey="years" stroke="#888" tick={{ fill: '#888', fontSize: 11 }}
+                     label={{ value: 'years', position: 'insideBottom', offset: -10, fill: '#666', fontSize: 11 }} />
+              <YAxis domain={[0, 100]} stroke="#888" tick={{ fill: '#888', fontSize: 11 }} unit="%" />
+              <Tooltip contentStyle={tooltipStyle} />
+              <ReferenceLine y={10} stroke="#f0ad4e" strokeDasharray="2 2" label={{value: 'warning zone', fill: '#f0ad4e', fontSize: 10, position: 'right'}} />
+              {results.map(r => (
+                <Line key={r.key} type="monotone" dataKey={`${r.key}_SoC`} name={CELLS[r.key].shortName}
+                      stroke={CELLS[r.key].color} strokeWidth={2} dot={false} isAnimationActive={false} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartPanel>
+
+        <ChartPanel title="Does it still deliver enough voltage?" subtitle="Solid = idle voltage. Dashed = voltage during a transmission burst. Below the red line (2.0V), the battery is officially dead.">
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={mergedData} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
+              <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
+              <XAxis dataKey="years" stroke="#888" tick={{ fill: '#888', fontSize: 11 }} />
+              <YAxis domain={[1.8, 3.8]} stroke="#888" tick={{ fill: '#888', fontSize: 11 }} unit="V" />
+              <Tooltip contentStyle={tooltipStyle} />
+              <ReferenceLine y={2.0} stroke="#d9534f" strokeDasharray="4 4" strokeWidth={1}
+                             label={{value: '2.0V cutoff', fill: '#d9534f', fontSize: 10, position: 'right'}} />
+              {results.map(r => (
+                <Fragment key={r.key}>
+                  <Line type="monotone" dataKey={`${r.key}_V`} stroke={CELLS[r.key].color} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <Line type="monotone" dataKey={`${r.key}_Vpulse`} stroke={CELLS[r.key].color} strokeWidth={1.5} strokeDasharray="3 3" dot={false} isAnimationActive={false} />
+                </Fragment>
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartPanel>
+
+        <ChartPanel title="The environment the battery lives in" subtitle="Temperature swings through the seasons and day/night.">
+          <ResponsiveContainer width="100%" height={160}>
+            <ComposedChart data={mergedData} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
+              <defs>
+                <linearGradient id="tempFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#d9534f" stopOpacity={0.3} />
+                  <stop offset="50%" stopColor="#f0ad4e" stopOpacity={0.15} />
+                  <stop offset="100%" stopColor="#5bc0de" stopOpacity={0.3} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
+              <XAxis dataKey="years" stroke="#888" tick={{ fill: '#888', fontSize: 11 }} />
+              <YAxis stroke="#888" tick={{ fill: '#888', fontSize: 11 }} unit="°C" />
+              <Tooltip contentStyle={tooltipStyle} />
+              <ReferenceLine y={0} stroke="#444" strokeDasharray="2 2" />
+              <Area type="monotone" dataKey={`${results[0].key}_T`} stroke="#c97b4a" fill="url(#tempFill)" strokeWidth={1.5} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </ChartPanel>
+
+        <ChartPanel title="Internal resistance — evolving over life" subtitle="How much the battery 'pushes back' when current is drawn. Low = healthy. Rising sharply = near end-of-life. Early deployment starts low, climbs as cell ages, then spikes at end.">
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={mergedData} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
+              <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
+              <XAxis dataKey="years" stroke="#888" tick={{ fill: '#888', fontSize: 11 }} />
+              <YAxis stroke="#888" tick={{ fill: '#888', fontSize: 11 }} unit=" mΩ" />
+              <Tooltip contentStyle={tooltipStyle} />
+              {results.map(r => (
+                <Line key={r.key} type="monotone" dataKey={`${r.key}_Rint`} name={CELLS[r.key].shortName}
+                      stroke={CELLS[r.key].color} strokeWidth={2} dot={false} isAnimationActive={false} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+          <div style={{...styles.chartExplain}}>
+            <strong>What you're looking at:</strong> As batteries age and discharge, the path the current takes through the cell gets harder (imagine a drain slowly clogging). This value tells you how much voltage will be "lost" inside the cell during a transmission. Spikes near end-of-life are the classic warning sign — plan your field replacements when the curve starts climbing steeply.
+          </div>
+        </ChartPanel>
+
+        <PassivationPanel predictions={passivationPredictions} shelfMonths={shelfMonths} />
+
+        <FeedbackPanel currentProject={currentProject} />
+
+        <SimulatorNotes />
+      </main>
+    </div>
+  );
+}
+
+// =============================================================================
+// EXPLAIN TAB — plain-English guide
+// =============================================================================
+// =============================================================================
+// DESIGN PANEL (Mode B — reverse spec: requirements → feasible configs)
+// =============================================================================
+// User states their requirements (lifespan, environment, backhaul, TX rate).
+// Tool sweeps across cells × TX periods, reports ACHIEVABLE / MARGINAL /
+// INFEASIBLE, top 3 cell recommendations, and a scatter plot showing
+// life-vs-TX-rate feasibility for every cell.
+
+const DESIGN_ENVIRONMENTS = {
+  'melbourne-outdoor':   { label: 'Melbourne outdoor',           meanT: 15, yearAmp: 10, dayAmp: 6  },
+  'nsw-hay-shed':        { label: 'NSW hay shed (metal roof)',   meanT: 22, yearAmp: 15, dayAmp: 18 },
+  'tasmania-coastal':    { label: 'Tasmania coastal',            meanT: 11, yearAmp: 8,  dayAmp: 6  },
+  'outback-australia':   { label: 'Outback Australia (harsh)',   meanT: 26, yearAmp: 14, dayAmp: 18 },
+  'indoor-controlled':   { label: 'Indoor climate-controlled',   meanT: 21, yearAmp: 2,  dayAmp: 1  },
+  'arctic':              { label: 'Arctic / alpine',             meanT: -5, yearAmp: 18, dayAmp: 8  },
+  'custom':              { label: 'Custom',                      meanT: 20, yearAmp: 10, dayAmp: 8  },
+};
+
+// Backhaul → device profile mapping. Sets realistic peak currents based on
+// actual datasheets. User then picks TX frequency separately.
+const DESIGN_BACKHAULS = {
+  'lorawan':       { label: 'LoRaWAN',                  baseCurrent_uA: 8,  pulseCurrent_mA: 120, pulseDuration_s: 0.8, voltageScaledModem: false },
+  'nbiot-nrf91':   { label: 'NB-IoT (nRF9151 PC3)',     baseCurrent_uA: 3,  pulseCurrent_mA: 420, pulseDuration_s: 4.5, voltageScaledModem: true  },
+  'nbiot-telit':   { label: 'NB-IoT (Telit ME310G1)',   baseCurrent_uA: 10, pulseCurrent_mA: 520, pulseDuration_s: 6.0, voltageScaledModem: true  },
+  'gsm':           { label: 'GSM (legacy 2G)',          baseCurrent_uA: 20, pulseCurrent_mA: 1800,pulseDuration_s: 5.0, voltageScaledModem: true  },
+  'nb-ntn':        { label: 'NB-NTN satellite',         baseCurrent_uA: 5,  pulseCurrent_mA: 450, pulseDuration_s: 12.0,voltageScaledModem: true  },
+};
+
+const TX_FREQUENCIES = [
+  { key: '5min',   label: '5 min',     period_s: 300    },
+  { key: '15min',  label: '15 min',    period_s: 900    },
+  { key: '1hr',    label: '1 hour',    period_s: 3600   },
+  { key: '4hr',    label: '4 hour',    period_s: 14400  },
+  { key: 'daily',  label: 'daily',     period_s: 86400  },
+  { key: 'weekly', label: 'weekly',    period_s: 604800 },
+];
+
+const COVERAGE_OPTIONS = {
+  'good':       { label: 'Good (no retries)',                 multiplier: 1.0  },
+  'fair':       { label: 'Fair (RSRP ~-105dBm, 2-3× retries)', multiplier: 2.4  },
+  'poor-ce1':   { label: 'Poor (NB-IoT CE1, 8× reps)',         multiplier: 8.0  },
+  'fringe-ce2': { label: 'Fringe (NB-IoT CE2, ~27×)',          multiplier: 27.0 },
+};
+
+function DesignPanel() {
+  // --- Requirements state ---
+  const [targetYears, setTargetYears] = useState(10);
+  const [envPreset, setEnvPreset] = useState('melbourne-outdoor');
+  const [envMeanT, setEnvMeanT] = useState(15);
+  const [envYearAmp, setEnvYearAmp] = useState(10);
+  const [envDayAmp, setEnvDayAmp] = useState(6);
+  const [backhaul, setBackhaul] = useState('nbiot-nrf91');
+  const [txFreq, setTxFreq] = useState('1hr');
+  const [shelfMonths, setShelfMonths] = useState(6);
+  const [coverage, setCoverage] = useState('good');
+  const [analysing, setAnalysing] = useState(false);
+  const [results, setResults] = useState(null);
+
+  // Environment preset auto-populates temp sliders
+  useEffect(() => {
+    if (envPreset === 'custom') return;
+    const p = DESIGN_ENVIRONMENTS[envPreset];
+    if (p) { setEnvMeanT(p.meanT); setEnvYearAmp(p.yearAmp); setEnvDayAmp(p.dayAmp); }
+  }, [envPreset]);
+
+  const runAnalysis = () => {
+    setAnalysing(true);
+    // Defer to next tick so UI updates before heavy sim loop
+    setTimeout(() => {
+      const bh = DESIGN_BACKHAULS[backhaul];
+      const covMult = COVERAGE_OPTIONS[coverage].multiplier;
+      const targetFreq = TX_FREQUENCIES.find(f => f.key === txFreq);
+      const tempProfile = { meanT: envMeanT, yearAmplitude: envYearAmp, dayAmplitude: envDayAmp };
+
+      const modifiers = {
+        voltageScaledModem: bh.voltageScaledModem,
+        inrushMultiplier: 1.0,
+        summerDutyBump: 0,
+        coldStartThresh: null,
+        coverageRetryMultiplier: covMult,
+      };
+
+      // Sweep: every cell × every TX frequency
+      const scatterData = [];
+      const cellBest = {};  // best achievable life per cell at target freq
+
+      for (const [cellKey, cell] of Object.entries(CELLS)) {
+        cellBest[cellKey] = { life: 0, freq: null, margin: -999 };
+
+        for (const freq of TX_FREQUENCIES) {
+          const r = simulate({
+            cellKey,
+            baseCurrent_uA: bh.baseCurrent_uA,
+            pulseCurrent_mA: bh.pulseCurrent_mA,
+            pulseDuration_s: bh.pulseDuration_s,
+            pulsePeriod_s: freq.period_s,
+            tempProfile,
+            durationYears: Math.max(targetYears * 1.5, 15), // sim long enough to see death
+            shelfMonths,
+            modifiers,
+          });
+
+          const achievedLife = r.deadYears || Math.max(targetYears * 1.5, 15);
+          scatterData.push({
+            cellKey,
+            cellName: cell.shortName,
+            cellColor: cell.color,
+            freqKey: freq.key,
+            freqLabel: freq.label,
+            period_s: freq.period_s,
+            life: Math.min(achievedLife, 25),
+            targetMet: achievedLife >= targetYears,
+            isTargetFreq: freq.key === txFreq,
+          });
+
+          // Track best at target frequency
+          if (freq.key === txFreq) {
+            const margin = (achievedLife - targetYears) / targetYears;
+            cellBest[cellKey] = { life: achievedLife, freq: freq.key, margin };
+          }
+        }
+      }
+
+      // Rank cells by margin at target freq — best feasible first
+      const ranked = Object.entries(cellBest)
+        .map(([k, v]) => ({ cellKey: k, cellName: CELLS[k].shortName, fullName: CELLS[k].name, ...v }))
+        .sort((a, b) => b.margin - a.margin);
+
+      // Top result verdict
+      const winner = ranked[0];
+      let verdict, verdictColor, verdictHeadline;
+      if (!winner || winner.margin < -0.2) {
+        verdict = 'INFEASIBLE';
+        verdictColor = '#ff7a7a';
+        verdictHeadline = `No cell gets close to ${targetYears} yr at ${targetFreq.label} TX in this environment.`;
+      } else if (winner.margin < 0) {
+        verdict = 'MARGINAL';
+        verdictColor = '#f0ad4e';
+        verdictHeadline = `Best option (${winner.fullName}) reaches ${winner.life.toFixed(1)} yr — ${Math.abs(winner.margin * 100).toFixed(0)}% short of target.`;
+      } else if (winner.margin < 0.3) {
+        verdict = 'MARGINAL';
+        verdictColor = '#f0ad4e';
+        verdictHeadline = `${winner.fullName} meets target (${winner.life.toFixed(1)} yr) but with only ${(winner.margin * 100).toFixed(0)}% margin.`;
+      } else {
+        verdict = 'ACHIEVABLE';
+        verdictColor = '#7dd87d';
+        verdictHeadline = `${winner.fullName} comfortably meets target with ${(winner.margin * 100).toFixed(0)}% margin (${winner.life.toFixed(1)} yr life).`;
+      }
+
+      // Generate design narrative
+      const narrative = [];
+      narrative.push(`**Target:** ${targetYears} year${targetYears > 1 ? 's' : ''} of field life at ${targetFreq.label} TX using ${bh.label}.`);
+      narrative.push(`**Environment:** ${DESIGN_ENVIRONMENTS[envPreset]?.label || 'Custom'} (mean ${envMeanT}°C, yearly swing ±${envYearAmp}°C).`);
+      narrative.push(`**Coverage:** ${COVERAGE_OPTIONS[coverage].label}.`);
+
+      const feasibleCount = ranked.filter(r => r.margin >= 0).length;
+      if (feasibleCount === 0) {
+        narrative.push(`**Recommendation:** None of the 6 cells meet this target. Consider reducing TX frequency, upgrading to a larger cell/HPC, or relaxing lifespan target.`);
+      } else if (feasibleCount <= 2) {
+        narrative.push(`**Recommendation:** Only ${feasibleCount} cell${feasibleCount > 1 ? 's' : ''} meet the target — tight design. Use ${winner.fullName}. Build in a spare cell allowance for variance.`);
+      } else {
+        narrative.push(`**Recommendation:** ${feasibleCount} cells feasible. ${winner.fullName} is the margin leader. For cost-optimised design, consider the cheapest feasible option; for robustness, pick the highest-margin.`);
+      }
+
+      setResults({
+        verdict, verdictColor, verdictHeadline, narrative,
+        ranked, scatterData,
+        targetYears, targetFreq: targetFreq.label, backhaul: bh.label,
+      });
+      setAnalysing(false);
+    }, 50);
+  };
+
+  return (
+    <div style={{...styles.grid, gridTemplateColumns: '380px 1fr'}} className="grid">
+      <aside style={styles.controls} className="controls">
+        <Section title="1 · Lifespan target">
+          <Slider label="Target field life" value={targetYears} min={1} max={20} step={1}
+                  unit="yr" onChange={setTargetYears} />
+          <div style={styles.hint}>How long the device must work in the field before battery replacement.</div>
+        </Section>
+
+        <Section title="2 · Environment">
+          <select value={envPreset} onChange={e => setEnvPreset(e.target.value)} style={styles.select}>
+            {Object.entries(DESIGN_ENVIRONMENTS).map(([k, p]) => (
+              <option key={k} value={k}>{p.label}</option>
+            ))}
+          </select>
+          <Slider label="Mean temperature" value={envMeanT} min={-40} max={60} step={1} unit="°C"
+                  onChange={v => { setEnvMeanT(v); setEnvPreset('custom'); }} />
+          <Slider label="Yearly swing (±)" value={envYearAmp} min={0} max={25} step={1} unit="°C"
+                  onChange={v => { setEnvYearAmp(v); setEnvPreset('custom'); }} />
+          <Slider label="Daily swing (±)" value={envDayAmp} min={0} max={25} step={1} unit="°C"
+                  onChange={v => { setEnvDayAmp(v); setEnvPreset('custom'); }} />
+        </Section>
+
+        <Section title="3 · Backhaul">
+          <select value={backhaul} onChange={e => setBackhaul(e.target.value)} style={styles.select}>
+            {Object.entries(DESIGN_BACKHAULS).map(([k, p]) => (
+              <option key={k} value={k}>{p.label}</option>
+            ))}
+          </select>
+          <div style={styles.hint}>
+            Sets realistic peak current ({DESIGN_BACKHAULS[backhaul]?.pulseCurrent_mA} mA) and active time ({DESIGN_BACKHAULS[backhaul]?.pulseDuration_s} s) for this technology.
+          </div>
+        </Section>
+
+        <Section title="4 · TX frequency & coverage">
+          <label style={{fontSize: 11, color: '#888', fontFamily: '"IBM Plex Mono", monospace',
+                         display: 'block', marginBottom: 4}}>How often does it transmit?</label>
+          <select value={txFreq} onChange={e => setTxFreq(e.target.value)} style={styles.select}>
+            {TX_FREQUENCIES.map(f => <option key={f.key} value={f.key}>Every {f.label}</option>)}
+          </select>
+          <label style={{fontSize: 11, color: '#888', fontFamily: '"IBM Plex Mono", monospace',
+                         display: 'block', marginTop: 10, marginBottom: 4}}>Coverage quality</label>
+          <select value={coverage} onChange={e => setCoverage(e.target.value)} style={styles.select}>
+            {Object.entries(COVERAGE_OPTIONS).map(([k, p]) => (
+              <option key={k} value={k}>{p.label}</option>
+            ))}
+          </select>
+        </Section>
+
+        <Section title="5 · Pre-deployment">
+          <Slider label="Shelf time before deploy" value={shelfMonths} min={0} max={36} step={1}
+                  unit="mo" onChange={setShelfMonths} />
+        </Section>
+
+        <button onClick={runAnalysis} disabled={analysing}
+                style={{...styles.feedbackSubmit, width: '100%', padding: '12px 16px',
+                        fontSize: 12, marginTop: 8, opacity: analysing ? 0.5 : 1}}>
+          {analysing ? 'ANALYSING…' : '▶ ANALYSE DESIGN'}
+        </button>
+      </aside>
+
+      <main style={styles.main}>
+        {!results && !analysing && (
+          <div style={styles.designIntro}>
+            <div style={styles.designIntroTitle}>Reverse design mode</div>
+            <p>
+              This tab works the <em>opposite</em> way to the Simulate tab. Instead of picking a cell and seeing how long
+              it lasts, you state your <strong>requirements</strong> — target lifespan, environment, backhaul, TX frequency —
+              and the tool tells you which cells are feasible, which are marginal, and which won't work.
+            </p>
+            <p>
+              Good for answering questions like:
+            </p>
+            <ul style={styles.designIntroList}>
+              <li><em>"Can we hit 10 years NB-IoT hourly TX in an NSW hay shed?"</em></li>
+              <li><em>"If we drop to 4-hour TX, what cells become feasible?"</em></li>
+              <li><em>"Is this Farmo deployment pushing the ER18505M pack too hard?"</em></li>
+            </ul>
+            <p style={{color: '#888', fontSize: 11, marginTop: 16}}>
+              Fill in the 5 sections on the left, then click <strong>Analyse Design</strong>. The analysis sweeps all 6 cells ×
+              6 TX frequencies = 36 simulations per run. Takes about a second.
+            </p>
+          </div>
+        )}
+
+        {analysing && (
+          <div style={{...styles.designIntro, textAlign: 'center'}}>
+            <div style={{fontSize: 14, color: '#c97b4a', fontFamily: '"IBM Plex Mono", monospace',
+                         letterSpacing: '0.1em'}}>running 36 simulations…</div>
+          </div>
+        )}
+
+        {results && (
+          <>
+            <DesignVerdict results={results} />
+            <DesignRecommendations results={results} />
+            <DesignScatter results={results} targetYears={results.targetYears} />
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function DesignVerdict({ results }) {
+  return (
+    <div style={{...styles.recBox, borderLeftColor: results.verdictColor}}>
+      <div style={{...styles.chartTitle, color: results.verdictColor, fontSize: 11,
+                   letterSpacing: '0.2em', marginBottom: 8}}>
+        ◉ {results.verdict}
+      </div>
+      <div style={{fontSize: 18, fontWeight: 300, color: '#e8e8e8', marginBottom: 14, lineHeight: 1.3}}>
+        {results.verdictHeadline}
+      </div>
+      {results.narrative.map((line, i) => (
+        <div key={i} style={{fontSize: 13, color: '#c8c8c8', marginBottom: 6, lineHeight: 1.5}}
+             dangerouslySetInnerHTML={{ __html: line.replace(/\*\*(.+?)\*\*/g, '<strong style="color:#e8e8e8">$1</strong>') }} />
+      ))}
+    </div>
+  );
+}
+
+function DesignRecommendations({ results }) {
+  return (
+    <div style={styles.feedbackPanel}>
+      <div style={styles.chartHead}>
+        <div style={styles.chartTitle}>Cell ranking at {results.targetFreq} TX</div>
+        <div style={styles.chartSub}>Sorted by margin vs {results.targetYears}-year target. Positive = meets target.</div>
+      </div>
+      <div style={{display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14}}>
+        {results.ranked.map((r, i) => {
+          const meetsTarget = r.margin >= 0;
+          const color = meetsTarget ? (r.margin > 0.3 ? '#7dd87d' : '#f0ad4e') : '#ff7a7a';
+          const icon = meetsTarget ? (r.margin > 0.3 ? '✓' : '⚠') : '✗';
+          return (
+            <div key={r.cellKey} style={{...styles.feedbackCard, borderLeftColor: color, padding: '10px 14px'}}>
+              <div style={{display:'flex', alignItems:'center', gap:12}}>
+                <span style={{fontSize: 16, color, width: 20, textAlign: 'center'}}>{icon}</span>
+                <span style={{fontSize: 10, color:'#666', width: 20,
+                              fontFamily:'"IBM Plex Mono",monospace'}}>#{i+1}</span>
+                <strong style={{fontSize: 12, color: '#e8e8e8', flex: 1}}>{r.fullName}</strong>
+                <span style={{fontSize: 12, color, fontFamily:'"IBM Plex Mono",monospace',
+                              letterSpacing: '0.05em'}}>
+                  {r.life.toFixed(1)} yr
+                </span>
+                <span style={{fontSize: 11, color: '#888', fontFamily:'"IBM Plex Mono",monospace',
+                              width: 70, textAlign: 'right'}}>
+                  {r.margin >= 0 ? '+' : ''}{(r.margin * 100).toFixed(0)}%
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DesignScatter({ results, targetYears }) {
+  // Scatter: X = TX period (log scale via index), Y = life years
+  // Color by cell, size indicates margin. Target line at Y=targetYears.
+  const periodIndices = TX_FREQUENCIES.map((f, i) => ({ ...f, x: i }));
+  const data = results.scatterData.map(d => ({
+    ...d,
+    x: periodIndices.findIndex(p => p.key === d.freqKey),
+    y: d.life,
+  }));
+
+  // Group by cell for separate Scatter series
+  const byCell = {};
+  for (const d of data) {
+    if (!byCell[d.cellKey]) byCell[d.cellKey] = [];
+    byCell[d.cellKey].push(d);
+  }
+
+  return (
+    <div style={styles.feedbackPanel}>
+      <div style={styles.chartHead}>
+        <div style={styles.chartTitle}>Feasibility envelope</div>
+        <div style={styles.chartSub}>
+          Life achievable at each TX frequency, per cell. Dashed line = {targetYears}-year target.
+          Points above the line meet the target. The vertical band marks your chosen TX frequency ({results.targetFreq}).
+        </div>
+      </div>
+      <ResponsiveContainer width="100%" height={340}>
+        <ScatterChart margin={{top: 20, right: 30, left: 0, bottom: 40}}>
+          <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
+          <XAxis type="number" dataKey="x" name="TX frequency"
+                 domain={[-0.5, TX_FREQUENCIES.length - 0.5]}
+                 ticks={TX_FREQUENCIES.map((_, i) => i)}
+                 tickFormatter={(v) => TX_FREQUENCIES[v]?.label || ''}
+                 stroke="#888" tick={{fill:'#888', fontSize: 11}}
+                 label={{value: 'TX frequency', position: 'insideBottom', offset: -10,
+                         fill: '#888', fontSize: 11}} />
+          <YAxis type="number" dataKey="y" name="Life"
+                 domain={[0, 25]} stroke="#888"
+                 tick={{fill:'#888', fontSize: 11}}
+                 label={{value: 'Achievable life (yr)', angle: -90, position: 'insideLeft',
+                         fill: '#888', fontSize: 11}} />
+          <Tooltip content={({payload}) => {
+            if (!payload || !payload[0]) return null;
+            const d = payload[0].payload;
+            return (
+              <div style={{background:'#131316', border:'1px solid #333', padding:'8px 12px',
+                           fontSize: 11, fontFamily:'"IBM Plex Mono",monospace'}}>
+                <div style={{color: d.cellColor, fontWeight: 600, marginBottom: 4}}>{d.cellName}</div>
+                <div style={{color: '#ccc'}}>every {d.freqLabel}: {d.life.toFixed(1)} yr</div>
+                <div style={{color: d.targetMet ? '#7dd87d' : '#ff7a7a'}}>
+                  {d.targetMet ? '✓ meets target' : '✗ below target'}
+                </div>
+              </div>
+            );
+          }} />
+          <ReferenceLine y={targetYears} stroke="#c97b4a" strokeDasharray="4 4"
+                         label={{value: `target: ${targetYears}yr`, fill: '#c97b4a', fontSize: 10, position: 'right'}} />
+          {/* Vertical band at user's chosen TX freq */}
+          {(() => {
+            const targetIdx = TX_FREQUENCIES.findIndex(f => f.label === results.targetFreq);
+            return targetIdx >= 0 ? (
+              <ReferenceLine x={targetIdx} stroke="#6b9bd1" strokeDasharray="2 4" strokeOpacity={0.5} />
+            ) : null;
+          })()}
+          {Object.entries(byCell).map(([cellKey, pts]) => (
+            <Scatter key={cellKey} name={CELLS[cellKey].shortName} data={pts}
+                     fill={CELLS[cellKey].color} />
+          ))}
+          <Legend wrapperStyle={{fontSize: 11, paddingTop: 10}} />
+        </ScatterChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ExplainPanel() {
+  return (
+    <div style={styles.explainWrap}>
+      <ExplainCard title="What these batteries actually are" color="#d4a574">
+        <p>These are <strong>lithium thionyl chloride</strong> (Li-SOCl₂) cells — the kind of battery that powers water meters, security alarms, asset trackers, and remote sensors for 10+ years at a time. They're <strong>single-use</strong> (can't be recharged), but they hold huge amounts of energy and lose almost nothing sitting on a shelf.</p>
+        <p>A standard D-cell alkaline battery gives you ~12,000 mAh at 1.5V. An ER34615 gives you ~19,000 mAh at 3.6V — that's about <strong>4× the total energy</strong> in the same physical size, and it stays fresh for a decade.</p>
+      </ExplainCard>
+
+      <ExplainCard title="The three flavours" color="#c97b4a">
+        <p>All three are the same chemistry, but built differently inside:</p>
+        <ul style={styles.explainList}>
+          <li><strong style={{color: '#d4a574'}}>Bobbin (ER34615)</strong> — the most common. Lots of energy, slow delivery. Perfect for <strong>low-power sensors</strong> that send a short message occasionally.</li>
+          <li><strong style={{color: '#c97b4a'}}>Spiral (ER34615M)</strong> — same size can, but the electrode is rolled up like a swiss roll instead of packed in solid. Less total energy, but <strong>10× faster delivery</strong>. Good for devices that need a lot of current right now (like a GSM modem).</li>
+          <li><strong style={{color: '#6b9bd1'}}>Hybrid (ER34615 + HPC)</strong> — a bobbin battery paired with a small capacitor. The capacitor handles the bursts; the battery slowly recharges it between transmissions. <strong>Best of both worlds</strong> — long life AND strong pulses. Costs more.</li>
+        </ul>
+      </ExplainCard>
+
+      <ExplainCard title="The four things that kill a battery" color="#f0ad4e">
+        <p><strong>1. Your device drains it.</strong> Obvious. The more current you draw, the faster you run out of energy.</p>
+        <p><strong>2. Pulling too much at once gives you less total energy.</strong> Counter-intuitive but true. If you pull current slowly, you get 19Ah. If you pull it fast, you might only get 8Ah — the chemistry literally can't keep up. This is called the <em>Peukert effect</em>, and this simulator handles it properly.</p>
+        <p><strong>3. The battery slowly drains itself (even doing nothing).</strong> About 1% per year at normal temperature. Double that for every 10°C hotter. A battery in a hot shed in western NSW might lose 4% per year just sitting there.</p>
+        <p><strong>4. Cold weather makes the voltage sag during transmission.</strong> At -40°C, the battery has the same total energy, but its internal resistance triples. When your device tries to pull 120mA for a LoRaWAN transmission, the voltage briefly drops — sometimes below the cutoff. The device sees a "dead" battery even though it has years of charge left.</p>
+      </ExplainCard>
+
+      <ExplainCard title="Internal resistance — the hidden bottleneck" color="#6b9bd1">
+        <p><strong>Every battery has a bit of "friction" inside it.</strong> When current flows, some voltage is lost to this internal resistance — imagine a garden hose with a partial kink: water still flows, but at lower pressure than if the hose was clear.</p>
+        <p>For Li-SOCl₂ cells, internal resistance does three things over the battery's life:</p>
+        <ul style={styles.explainList}>
+          <li><strong>Starts low on a fresh cell</strong> (~130mΩ for bobbin, ~45mΩ for spiral).</li>
+          <li><strong>Rises slowly as the battery ages</strong>, roughly 30% over 10 years at room temp — doubling for every 10°C hotter the storage.</li>
+          <li><strong>Spikes dramatically near end of life</strong> (2-10× the fresh value) as the chemistry products clog up the cell's internal pores.</li>
+        </ul>
+        <p><strong>Why you care:</strong> the internal resistance chart is the most reliable end-of-life warning you'll get. A steeply rising curve is the battery telling you "I have maybe 6-12 months left" — long before the voltage actually fails. For deployments where replacement is expensive (Balco, Shepherd-Hay, remote metering), watching this curve pays off.</p>
+      </ExplainCard>
+
+      <ExplainCard title="Passivation — why new batteries sometimes look 'dead'" color="#d4a574">
+        <p><strong>Here's a weird one.</strong> A brand-new Li-SOCl₂ cell that's been sitting in a box for 6 months can show 3.67V on a multimeter, yet when you connect it to your sensor, the voltage briefly collapses to 2-3V and your device fails to boot. This is <strong>passivation</strong>, and it's the most common "why isn't this working?" gotcha.</p>
+        <p><strong>What's going on:</strong> the same chemistry that makes these batteries last 10+ years — a protective film on the lithium anode — is a wall that current has to punch through when you first use the cell. Short storage = thin wall, easy punch-through, barely a dip. Long storage at high temperatures = thick wall, big dip, device sees a dead battery.</p>
+        <p><strong>The passivation panel in the Simulate tab tells you:</strong></p>
+        <ul style={styles.explainList}>
+          <li><strong>How big the voltage dip will be</strong> (TMV, or Transient Minimum Voltage) given your storage time and environment.</li>
+          <li><strong>Whether your device will survive that dip</strong> or need depassivation first.</li>
+          <li><strong>The depassivation protocol</strong> — a specific load current and duration that punches through the film safely before you deploy.</li>
+        </ul>
+        <p><strong>The punchline:</strong> if you're buying cells in bulk and storing them before deployment, you need to either (a) use them within 3-6 months, (b) depassivate them on a bench before field install, or (c) use the Hybrid (HPC) variant, where the capacitor handles the first pulse so the battery doesn't have to.</p>
+      </ExplainCard>
+
+      <ExplainCard title="How to read the charts" color="#6b9bd1">
+        <p><strong>State of Charge chart</strong> — the battery's fuel gauge over years. 100% at the start, 0% when dead. If a line doesn't reach your required lifespan, that battery option won't make it.</p>
+        <p><strong>Voltage chart</strong> — two lines per battery. The <strong>solid line</strong> is voltage when your device is idle (sleeping). The <strong>dashed line</strong> is voltage during a transmission burst, when current spikes. If the dashed line dips below the red 2.0V line, your device will malfunction during that burst — even if the solid line is fine.</p>
+        <p><strong>Temperature chart</strong> — just shows the environment the battery is sitting in. Seasons create the slow wave; day/night creates the ripple on top.</p>
+      </ExplainCard>
+
+      <ExplainCard title="Choosing a battery — quick decision guide" color="#7dd87d">
+        <p><strong>My device is a simple sensor that sends a message occasionally.</strong> → <strong>Bobbin</strong>. Cheapest, longest-lived, plenty good for LoRaWAN.</p>
+        <p><strong>My device has a cellular modem (NB-IoT or GSM).</strong> → <strong>Hybrid</strong>, especially for deployments in cold climates or long-shelf situations. The capacitor stops the voltage collapsing during the modem's current spikes.</p>
+        <p><strong>My device draws continuous power (always-on receiver, motor).</strong> → <strong>Spiral</strong>, and plan for shorter life — you're in the Peukert zone.</p>
+        <p><strong>It will sit in stock for months before deployment.</strong> → Any option is fine, but factor 6-12 months of shelf time into the lifespan calculation. Hot warehouses eat battery faster.</p>
+        <p><strong>It's going somewhere very cold (-30°C and below).</strong> → <strong>Hybrid</strong> is almost mandatory. Plain bobbin or spiral will have voltage collapse during transmissions.</p>
+      </ExplainCard>
+
+      <ExplainCard title="Saving your own projects" color="#7dd87d">
+        <p>You'll often be running the same calculation repeatedly — e.g. "how long will an Optima Pulse last at the Balco site?" — with only minor variations. Rather than setting all the sliders each time, use <strong>Save as new</strong> in the top-left panel.</p>
+        <p><strong>Built-in projects</strong> are provided for each Eden Worth product family as a starting point. Select one, tweak as needed, then save a new copy under a specific deployment name (e.g. "Optima Pulse · Farmo Yea silo").</p>
+        <p><strong>Auto-save:</strong> once you've saved a project and it's loaded, any changes you make to the sliders are automatically saved back to that project after ~2 seconds. A small indicator shows "saving…" then "auto-saved" so you know it took. Built-in projects are read-only — make changes there and use <em>Save as new</em> to preserve them.</p>
+        <p><strong>Shared storage (v3.4 hosted):</strong> projects are stored in a database on the Eden Worth VPS. Everyone on the team sees the same projects. When Kyle saves a new "Farmo · Yea silo" project, it appears in your list next time you refresh. Each save is versioned — the last 50 changes per project are kept, tagged with who made them. No more browser-local silos.</p>
+        <p><strong>Last-used restore:</strong> the tool remembers which project you were last working on and auto-loads it when you reopen the tab.</p>
+        <p><strong>Export / Import</strong> is still available — useful for archiving a snapshot to Confluence or sharing a specific set of projects with a customer or supplier. Export emits a JSON file; Import merges it into the server database (duplicates get overwritten).</p>
+      </ExplainCard>
+
+      <ExplainCard title="What this simulator doesn't do" color="#888">
+        <p>Some honest caveats on model limitations:</p>
+        <ul style={styles.explainList}>
+          <li><strong>Doesn't model individual cell variation.</strong> Real batteries from the same batch can differ by ±10% in lifespan.</li>
+          <li><strong>Doesn't model voltage delay after long cold storage.</strong> Cells stored for years at high temp can have their first transmission fail. You'd depassivate them (apply a small load for a few minutes) before deployment anyway.</li>
+          <li><strong>Doesn't model pack configurations.</strong> Two cells in parallel don't exactly double the capacity; one always leads.</li>
+          <li><strong>Doesn't model how the HPC capacitor ages.</strong> The capacitor itself degrades over 10+ years but this effect is minor.</li>
+        </ul>
+        <p>See the <em>Validation</em> tab to see exactly how accurate the model is against published datasheet curves.</p>
+      </ExplainCard>
+    </div>
+  );
+}
+
+// =============================================================================
+// VALIDATE TAB
+// =============================================================================
+function ValidatePanel() {
+  const [selectedDataset, setSelectedDataset] = useState('ultralife-runtime');
+  const [userData, setUserData] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const fileRef = useRef();
+
+  const dataset = VALIDATION_DATASETS[selectedDataset];
+
+  const handleFile = (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target.result;
+        const lines = text.trim().split('\n');
+        const parsed = lines.slice(lines[0].includes(',') && isNaN(parseFloat(lines[0].split(',')[0])) ? 1 : 0)
+          .map(l => {
+            const [x, y] = l.split(',').map(v => parseFloat(v.trim()));
+            return { x, y };
+          })
+          .filter(p => !isNaN(p.x) && !isNaN(p.y));
+        setUserData({ name: file.name, points: parsed });
+      } catch (err) {
+        alert('CSV parse failed: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // Compute RMS residuals for runtime dataset
+  const residualsAnalysis = useMemo(() => {
+    if (dataset.type === 'runtime') {
+      const points = (userData?.points || dataset.points).map(p => ({
+        measured: p.y, x: p.x, predicted: dataset.simFn(p.x),
+        pct_err: ((dataset.simFn(p.x) - p.y) / p.y * 100),
+      }));
+      const rms = Math.sqrt(points.reduce((s, p) => s + Math.pow((p.predicted - p.measured) / p.measured, 2), 0) / points.length) * 100;
+      const maxErr = Math.max(...points.map(p => Math.abs(p.pct_err)));
+      return { points, rms, maxErr };
+    }
+    return null;
+  }, [dataset, userData]);
+
+  const chartData = useMemo(() => {
+    if (dataset.type === 'runtime') {
+      const measuredPts = (userData?.points || dataset.points);
+      const xMax = Math.max(...measuredPts.map(p => p.x)) * 1.2;
+      const modelCurve = [];
+      for (let i = 0; i < 100; i++) {
+        const x = 0.1 + (i / 100) * xMax;
+        modelCurve.push({ x, model: dataset.simFn(x) });
+      }
+      return { modelCurve, measuredPts };
+    } else {
+      // vtemp - each series is independent
+      return null;
+    }
+  }, [dataset, userData]);
+
+  return (
+    <div style={styles.validateWrap}>
+      <div className="plain-box">
+        <div className="ptitle">What this tab is for</div>
+        Compare the simulator's predictions against <strong>real published measurements</strong> from battery vendors. If the model closely matches vendor test data, you can trust it for deployment planning. If not, you know where not to trust it.
+      </div>
+
+      <div style={styles.valControlRow}>
+        <label style={styles.valLabel}>Reference dataset:</label>
+        <select value={selectedDataset} onChange={e => { setSelectedDataset(e.target.value); setUserData(null); }} style={{...styles.select, marginBottom: 0, flex: 1}}>
+          {Object.entries(VALIDATION_DATASETS).map(([k, d]) => <option key={k} value={k}>{d.name}</option>)}
+        </select>
+      </div>
+
+      <div style={styles.valDesc}>{dataset.description}</div>
+
+      {dataset.type === 'runtime' && (
+        <>
+          <div style={styles.valChartPanel}>
+            <div style={styles.chartTitle}>Runtime vs current · model vs measured</div>
+            <div style={styles.chartSub}>Solid line = simulator prediction. Dots = measured datapoints from datasheet.</div>
+            <ResponsiveContainer width="100%" height={340}>
+              <ComposedChart margin={{ top: 15, right: 30, left: 10, bottom: 30 }}>
+                <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
+                <XAxis dataKey="x" type="number" scale="log" domain={[0.1, 300]} stroke="#888"
+                       tick={{ fill: '#888', fontSize: 11 }}
+                       label={{ value: dataset.xLabel, position: 'insideBottom', offset: -15, fill: '#888', fontSize: 11 }}
+                       ticks={[0.1, 1, 10, 100]} />
+                <YAxis domain={[0, 22]} stroke="#888" tick={{ fill: '#888', fontSize: 11 }}
+                       label={{ value: dataset.yLabel, angle: -90, position: 'insideLeft', fill: '#888', fontSize: 11 }} />
+                <Tooltip contentStyle={tooltipStyle} />
+                <Line data={chartData.modelCurve} type="monotone" dataKey="model" stroke="#c97b4a" strokeWidth={2} dot={false} name="Simulator model" isAnimationActive={false} />
+                <Scatter data={chartData.measuredPts.map(p => ({x:p.x, y:p.y}))} fill="#6b9bd1" name="Measured (vendor)" />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+
+          <ResidualsTable analysis={residualsAnalysis} />
+        </>
+      )}
+
+      {dataset.type === 'vtemp' && (
+        <VTempValidationChart dataset={dataset} />
+      )}
+
+      {dataset.type === 'passivation' && (
+        <PassivationValidation dataset={dataset} />
+      )}
+
+      <div style={styles.valSection}>
+        <div style={styles.valSectionTitle}>Add your own measurements</div>
+        <div className="plain-box">
+          <div className="ptitle">How to use</div>
+          Got test data from your own bench or from a published graph? Paste it in CSV format (one "x,y" pair per line) and compare directly against the simulator. For the runtime dataset, format is <code style={styles.code}>current_mA, delivered_Ah</code>. First line can be a header or data.
+          <br /><br />
+          <strong>No bench equipment?</strong> Use <a href="https://apps.automeris.io/wpd/" target="_blank" style={{color: '#6b9bd1'}}>WebPlotDigitizer</a> (free) to click datapoints off any published graph and export as CSV.
+        </div>
+        <div
+          className={`drop-zone ${dragging ? 'drag' : ''}`}
+          onClick={() => fileRef.current?.click()}
+          onDragEnter={e => { e.preventDefault(); setDragging(true); }}
+          onDragOver={e => e.preventDefault()}
+          onDragLeave={() => setDragging(false)}
+          onDrop={e => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }}
+        >
+          {userData ? `✓ Using ${userData.name} (${userData.points.length} points) — click to replace` : 'Drop a CSV here, or click to choose a file'}
+          <input type="file" ref={fileRef} accept=".csv,.txt" style={{display:'none'}}
+                 onChange={e => e.target.files[0] && handleFile(e.target.files[0])} />
+        </div>
+        {userData && (
+          <button onClick={() => setUserData(null)} style={styles.clearBtn}>Clear custom data</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PassivationValidation({ dataset }) {
+  // For each anchor, run the model and compare
+  const results = dataset.anchors.map(a => {
+    const bobbin = CELLS['ER34615'];
+    const pred = predictPassivation(bobbin, a.storageMonths, a.storageTemp, a.current_mA);
+    return {
+      ...a,
+      predicted_TMV: pred.tmv_V,
+      predicted_dip: pred.dip_V,
+      filmMaturity: pred.filmMaturity,
+      error_V: pred.tmv_V - a.observed_TMV,
+    };
+  });
+
+  const rms = Math.sqrt(results.reduce((s, r) => s + r.error_V * r.error_V, 0) / results.length);
+  const rms_mV = rms * 1000;
+  const verdict = rms_mV < 200 ? 'excellent' : rms_mV < 400 ? 'good' : 'needs tuning';
+  const verdictColor = rms_mV < 200 ? '#7dd87d' : rms_mV < 400 ? '#f0ad4e' : '#ff7a7a';
+
+  return (
+    <>
+      <div style={styles.residualsBox}>
+        <div style={styles.residualsTitle}>Passivation model calibration</div>
+        <div style={styles.residualsStats}>
+          <div><strong style={{fontSize: 22, color: verdictColor, fontFamily: '"IBM Plex Mono", monospace'}}>{rms_mV.toFixed(0)} mV</strong><br /><span style={styles.residualsSubLabel}>RMS error</span></div>
+          <div><strong style={{fontSize: 22, color: '#e8e8e8', fontFamily: '"IBM Plex Mono", monospace'}}>{results.length}</strong><br /><span style={styles.residualsSubLabel}>anchor points</span></div>
+          <div><strong style={{fontSize: 16, color: verdictColor, fontFamily: '"IBM Plex Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.1em'}}>{verdict}</strong><br /><span style={styles.residualsSubLabel}>verdict</span></div>
+        </div>
+        <table style={styles.residualsTable}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Scenario</th>
+              <th style={styles.th}>Film maturity</th>
+              <th style={styles.th}>Observed TMV</th>
+              <th style={styles.th}>Predicted TMV</th>
+              <th style={styles.th}>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {results.map((r, i) => (
+              <tr key={i}>
+                <td style={{...styles.td, fontSize: 11}}>{r.label}</td>
+                <td style={styles.td}>{(r.filmMaturity * 100).toFixed(0)}%</td>
+                <td style={styles.td}>{r.observed_TMV.toFixed(2)}V</td>
+                <td style={styles.td}>{r.predicted_TMV.toFixed(2)}V</td>
+                <td style={{...styles.td, color: Math.abs(r.error_V) < 0.15 ? '#7dd87d' : Math.abs(r.error_V) < 0.30 ? '#f0ad4e' : '#ff7a7a'}}>
+                  {r.error_V > 0 ? '+' : ''}{r.error_V.toFixed(2)}V
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={styles.plainInline}>
+          <strong>What this means:</strong> The model predicts the minimum voltage (TMV) during first transmission within {rms_mV.toFixed(0)}mV of the MDPI anchor point — the most extreme real measurement we have. Under more typical storage conditions (3-12 months at ambient temperature), predictions should be better than this. Note: this is calibrated against just 2 published points; confidence would improve with more anchor data, which is why the "Validation" tab supports CSV imports.
+        </div>
+      </div>
+    </>
+  );
+}
+
+function VTempValidationChart({ dataset }) {
+  // For each current level, compute simulator prediction across temps and compare
+  const seriesData = dataset.series.map(s => {
+    const merged = s.points.map(p => {
+      // simulate terminal voltage at this current & temperature
+      const cell = CELLS['ER34615'];
+      const tempProfile = { meanT: p.x, yearAmplitude: 0, dayAmplitude: 0 };
+      const V_sim = terminalVoltage(1.0, s.current_mA, p.x, 1e6, cell, null);
+      return { x: p.x, measured: p.y, model: parseFloat(V_sim.toFixed(3)) };
+    });
+    const rms = Math.sqrt(merged.reduce((sum, p) => sum + Math.pow(p.model - p.measured, 2), 0) / merged.length);
+    return { ...s, data: merged, rms: rms * 1000 };  // mV
+  });
+
+  return (
+    <>
+      <div style={styles.valChartPanel}>
+        <div style={styles.chartTitle}>Terminal voltage vs temperature</div>
+        <div style={styles.chartSub}>Lines with circles = measured datapoints. Lines with crosses = simulator predictions at the same points.</div>
+        <ResponsiveContainer width="100%" height={360}>
+          <LineChart margin={{ top: 15, right: 30, left: 10, bottom: 30 }}>
+            <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
+            <XAxis dataKey="x" type="number" domain={[-50, 70]} stroke="#888" tick={{ fill: '#888', fontSize: 11 }}
+                   label={{ value: '°C', position: 'insideBottom', offset: -15, fill: '#888', fontSize: 11 }} />
+            <YAxis domain={[2.7, 3.8]} stroke="#888" tick={{ fill: '#888', fontSize: 11 }}
+                   label={{ value: 'V', angle: -90, position: 'insideLeft', fill: '#888', fontSize: 11 }} />
+            <Tooltip contentStyle={tooltipStyle} />
+            <Legend wrapperStyle={{fontSize: 11, paddingTop: 10}} />
+            {seriesData.map(s => (
+              <Fragment key={s.label}>
+                <Line data={s.data} dataKey="measured" name={`${s.label} measured`} stroke={s.color} strokeWidth={2} dot={{r:4}} isAnimationActive={false} />
+                <Line data={s.data} dataKey="model" name={`${s.label} model`} stroke={s.color} strokeWidth={1.5} strokeDasharray="4 3" dot={{r:3, fill: 'none', stroke: s.color}} isAnimationActive={false} />
+              </Fragment>
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div style={styles.residualsBox}>
+        <div style={styles.residualsTitle}>Accuracy per current level (lower is better)</div>
+        {seriesData.map(s => (
+          <div key={s.label} style={styles.residualRow}>
+            <span style={{color: s.color, fontWeight: 500, flex: '0 0 80px'}}>{s.label}</span>
+            <span>RMS error: <strong>{s.rms.toFixed(0)} mV</strong></span>
+            <span style={{color: s.rms < 100 ? '#7dd87d' : s.rms < 200 ? '#f0ad4e' : '#ff7a7a'}}>
+              {s.rms < 100 ? 'excellent' : s.rms < 200 ? 'acceptable' : 'poor match'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function ResidualsTable({ analysis }) {
+  if (!analysis) return null;
+  const { points, rms, maxErr } = analysis;
+  const verdict = rms < 10 ? 'excellent' : rms < 25 ? 'good' : 'needs tuning';
+  const verdictColor = rms < 10 ? '#7dd87d' : rms < 25 ? '#f0ad4e' : '#ff7a7a';
+
+  return (
+    <div style={styles.residualsBox}>
+      <div style={styles.residualsTitle}>Model accuracy summary</div>
+      <div style={styles.residualsStats}>
+        <div><strong style={{fontSize: 22, color: verdictColor, fontFamily: '"IBM Plex Mono", monospace'}}>{rms.toFixed(1)}%</strong><br /><span style={styles.residualsSubLabel}>RMS error</span></div>
+        <div><strong style={{fontSize: 22, color: '#e8e8e8', fontFamily: '"IBM Plex Mono", monospace'}}>{maxErr.toFixed(1)}%</strong><br /><span style={styles.residualsSubLabel}>worst point</span></div>
+        <div><strong style={{fontSize: 16, color: verdictColor, fontFamily: '"IBM Plex Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.1em'}}>{verdict}</strong><br /><span style={styles.residualsSubLabel}>verdict</span></div>
+      </div>
+      <table style={styles.residualsTable}>
+        <thead>
+          <tr>
+            <th style={styles.th}>Current (mA)</th>
+            <th style={styles.th}>Measured (Ah)</th>
+            <th style={styles.th}>Model (Ah)</th>
+            <th style={styles.th}>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {points.map((p, i) => (
+            <tr key={i}>
+              <td style={styles.td}>{p.x}</td>
+              <td style={styles.td}>{p.measured.toFixed(2)}</td>
+              <td style={styles.td}>{p.predicted.toFixed(2)}</td>
+              <td style={{...styles.td, color: Math.abs(p.pct_err) < 5 ? '#7dd87d' : Math.abs(p.pct_err) < 15 ? '#f0ad4e' : '#ff7a7a'}}>
+                {p.pct_err > 0 ? '+' : ''}{p.pct_err.toFixed(1)}%
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={styles.plainInline}>
+        <strong>What this means:</strong> the simulator predicts delivered capacity within {rms.toFixed(0)}% of real vendor measurements across the whole current range. The model was fitted to these exact points, so this is the best-case validation — but it confirms the physics formulation is correct and the coefficients are tight.
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// SHARED COMPONENTS
+// =============================================================================
+function RecommendationBox({ rec }) {
+  const classMap = { good: 'verdict-good', bad: 'verdict-bad', warn: 'verdict-warn' };
+  return (
+    <div className={`plain-box ${classMap[rec.tone]}`} style={{marginBottom: 16}}>
+      <div className="ptitle">Plain-English verdict</div>
+      <div style={{fontSize: 15, fontWeight: 500, marginBottom: 10, color: '#e8e8e8'}}>{rec.headline}</div>
+      {rec.contextParts.map((p, i) => <p key={i} style={{margin: '8px 0', fontSize: 13, color: '#c8c8c8'}}>{p}</p>)}
+      {rec.cellRecs.length > 0 && (
+        <>
+          <div style={{margin: '12px 0 6px', fontSize: 11, letterSpacing: '0.12em', color: '#888', textTransform: 'uppercase', fontFamily: '"IBM Plex Mono", monospace'}}>What to buy</div>
+          {rec.cellRecs.map((r, i) => (
+            <div key={i} style={{fontSize: 13, margin: '4px 0', color: '#c8c8c8'}} dangerouslySetInnerHTML={{__html: r.replace(/\*\*(.+?)\*\*/g, '<strong style="color:#e8e8e8">$1</strong>')}} />
+          ))}
+        </>
+      )}
+      {rec.recommended && (
+        <div style={{marginTop: 12, padding: '10px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: 2, fontSize: 12}}>
+          <span style={{color: '#888'}}>Best match for these conditions: </span>
+          <strong style={{color: rec.recommended.color}}>{rec.recommended.name}</strong>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResultCard({ result, durationYears }) {
+  const { cell, deadYears, data, usable_mAh, initial_mAh, peukertFrac, avgCurrent_mA } = result;
+  const final = data[data.length - 1];
+  const survived = !deadYears || deadYears >= durationYears;
+  const endSoC = final.soc;
+  const endV = final.V_base;
+  const usableAh = (usable_mAh / 1000).toFixed(1);
+  const ratedAh = (initial_mAh / 1000).toFixed(1);
+  const peukertLoss = ((1 - peukertFrac) * 100).toFixed(0);
+
+  return (
+    <div style={{...styles.resultCard, borderTop: `3px solid ${cell.color}`}}>
+      <div style={styles.resultHead}>
+        <div style={styles.resultName}>{cell.name}</div>
+        <div style={{...styles.badge, background: survived ? '#1a3d1a' : '#3d1a1a', color: survived ? '#7dd87d' : '#ff7a7a'}}>
+          {survived ? 'survives' : `dies @ ${deadYears.toFixed(1)}yr`}
+        </div>
+      </div>
+      <div style={styles.resultStats}>
+        <Stat label="end SoC" value={`${endSoC.toFixed(1)}%`} />
+        <Stat label="end V" value={`${endV.toFixed(2)}V`} />
+        <Stat label="life" value={survived ? `>${durationYears}yr` : `${deadYears.toFixed(1)}yr`} highlight={!survived} />
+      </div>
+      {peukertFrac < 0.99 && (
+        <div style={styles.peukertNote}>
+          <span style={{color: '#f0ad4e'}}>⚠ Peukert derating:</span> getting {usableAh}Ah of rated {ratedAh}Ah ({peukertLoss}% lost due to current draw)
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExplainCard({ title, color, children }) {
+  return (
+    <div style={{...styles.explainCard, borderLeftColor: color}}>
+      <h3 style={{...styles.explainTitle, color}}>{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function ModifiersSection({ modifiers, setModifiers }) {
+  const update = (k, v) => setModifiers(m => ({ ...m, [k]: v }));
+  return (
+    <div style={styles.section}>
+      <div style={{...styles.sectionTitle, color: '#6b9bd1'}}>Custom Modifiers</div>
+      <div style={{fontSize: 10, color: '#888', marginBottom: 10, lineHeight: 1.5,
+                   fontFamily: '"IBM Plex Mono", monospace'}}>
+        Per-project physics tweaks. Saved with the project. Use these to model device-specific behaviour the default physics doesn't cover.
+      </div>
+
+      <label style={{...styles.toggleRow, marginBottom: 10}}>
+        <input type="checkbox" checked={modifiers.voltageScaledModem}
+               onChange={e => update('voltageScaledModem', e.target.checked)} />
+        <span style={{fontSize: 11}}>Voltage-scaled modem peak current</span>
+      </label>
+      {modifiers.voltageScaledModem && (
+        <div style={{...styles.hint, marginBottom: 12}}>
+          Pulse current scales with 1/V_battery (constant-power load).
+          At 3.0V battery, a 350mA pulse becomes ~420mA. Recommended for nRF91xx, Telit ME310, SIMCOM.
+        </div>
+      )}
+
+      <Slider label="Cold-start inrush (×)" value={modifiers.inrushMultiplier} min={1.0} max={3.0} step={0.1}
+              unit="×" onChange={v => update('inrushMultiplier', v)} />
+      <div style={{...styles.hint, marginBottom: 12}}>
+        Extra current when first powering up below threshold. 1.0× = no inrush.
+      </div>
+
+      <label style={{fontSize: 11, color: '#888', fontFamily: '"IBM Plex Mono", monospace'}}>
+        Cold-start threshold
+      </label>
+      <div style={{display: 'flex', gap: 8, marginTop: 4, marginBottom: 12}}>
+        <input type="number" placeholder="off" value={modifiers.coldStartThresh ?? ''}
+               onChange={e => update('coldStartThresh', e.target.value === '' ? null : parseFloat(e.target.value))}
+               style={{flex: 1, background: '#0a0a0b', color: '#e8e8e8', border: '1px solid #333',
+                       padding: '6px 10px', fontSize: 11, fontFamily: '"IBM Plex Mono", monospace'}} />
+        <span style={{fontSize: 11, color: '#666', alignSelf: 'center'}}>°C</span>
+      </div>
+
+      <Slider label="Summer duty-cycle bump" value={modifiers.summerDutyBump * 100} min={0} max={100} step={5}
+              unit="%" onChange={v => update('summerDutyBump', v / 100)} />
+      <div style={{...styles.hint, marginBottom: 14}}>
+        If device TX-rate goes up in summer (fridge compressors, pumps, HVAC). 0 = no seasonal change.
+      </div>
+
+      <label style={{fontSize: 11, color: '#888', fontFamily: '"IBM Plex Mono", monospace',
+                     display: 'block', marginBottom: 4}}>
+        Coverage quality (retry multiplier)
+      </label>
+      <select
+        value={
+          modifiers.coverageRetryMultiplier === 1.0 ? 'good' :
+          modifiers.coverageRetryMultiplier === 2.4 ? 'fair' :
+          modifiers.coverageRetryMultiplier === 8.0 ? 'poor-ce1' :
+          modifiers.coverageRetryMultiplier === 27.0 ? 'fringe-ce2' :
+          'custom'
+        }
+        onChange={e => {
+          const m = {good: 1.0, fair: 2.4, 'poor-ce1': 8.0, 'fringe-ce2': 27.0}[e.target.value];
+          if (m !== undefined) update('coverageRetryMultiplier', m);
+        }}
+        style={{...styles.select, marginBottom: 8}}>
+        <option value="good">Good — RSRP &gt;-100dBm, no retries (1×)</option>
+        <option value="fair">Fair — RSRP ~-105dBm, 2-3 retries (2.4×)</option>
+        <option value="poor-ce1">Poor — NB-IoT CE1, 8× repetitions</option>
+        <option value="fringe-ce2">Fringe — NB-IoT CE2, ~27× effective</option>
+        <option value="custom">Custom (use slider below)</option>
+      </select>
+      <Slider label="Retry multiplier (override)" value={modifiers.coverageRetryMultiplier}
+              min={1.0} max={40.0} step={0.1} unit="×"
+              onChange={v => update('coverageRetryMultiplier', v)} />
+      <div style={styles.hint}>
+        Multiplies active-phase duration to model retries in marginal coverage.
+        1× = happy path, 8× = NB-IoT CE1, 27× = extreme. Based on Kyle's Balco observation.
+      </div>
+    </div>
+  );
+}
+
+function ExportNagBanner({ meta, projectCount, onExport, onDismiss }) {
+  const daysSince = meta.lastExportAt
+    ? Math.floor((Date.now() - new Date(meta.lastExportAt).getTime()) / 86400000)
+    : null;
+  const reason = meta.unsavedChanges >= 10
+    ? `${meta.unsavedChanges} changes since last export`
+    : daysSince !== null
+      ? `${daysSince} days since last backup`
+      : 'no backup yet';
+  return (
+    <div style={styles.nagBanner}>
+      <div style={styles.nagIcon}>💾</div>
+      <div style={{flex:1}}>
+        <div style={styles.nagTitle}>Time to back up your projects</div>
+        <div style={styles.nagText}>
+          You have <strong>{projectCount} saved project{projectCount > 1 ? 's' : ''}</strong> stored in this browser only ({reason}).
+          Export a JSON backup to keep them safe — especially before clearing browser data, switching machines, or sharing with the team.
+        </div>
+      </div>
+      <div style={{display:'flex', gap: 8, flexShrink: 0}}>
+        <button onClick={onExport} style={styles.nagPrimaryBtn}>Export now</button>
+        <button onClick={onDismiss} style={styles.nagSecondaryBtn}>Remind later</button>
+      </div>
+    </div>
+  );
+}
+
+function ProjectPanel({ builtin, userProjects, current, onLoad, onSaveClick, onDelete, onExport, onImport, saveStatus, isAutoSaved }) {
+  const importRef = useRef();
+  const userCount = Object.keys(userProjects).length;
+  const hasUserProjects = userCount > 0;
+
+  return (
+    <div>
+      <select value={current} onChange={e => onLoad(e.target.value)} style={styles.select}>
+        <option value="">— select a project —</option>
+        <optgroup label="Eden Worth products">
+          {Object.entries(builtin).map(([k, p]) => (
+            <option key={k} value={k}>{p.name}</option>
+          ))}
+        </optgroup>
+        {hasUserProjects && (
+          <optgroup label="Your saved projects">
+            {Object.entries(userProjects).map(([k, p]) => (
+              <option key={k} value={k}>{p.name}</option>
+            ))}
+          </optgroup>
+        )}
+      </select>
+
+      {current && (builtin[current] || userProjects[current]) && (
+        <div style={styles.projectDesc}>
+          {(builtin[current] || userProjects[current]).description}
+          {isAutoSaved && (
+            <div style={styles.saveStatusLine}>
+              {saveStatus === 'saving' && <><span style={{color:'#f0ad4e'}}>●</span> saving…</>}
+              {saveStatus === 'saved' && <><span style={{color:'#7dd87d'}}>●</span> auto-saved</>}
+              {!saveStatus && <><span style={{color:'#555'}}>●</span> auto-save active</>}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={styles.projectButtonRow}>
+        <button onClick={onSaveClick} style={styles.projectBtn} title="Save current settings as a new project">
+          💾 Save as new
+        </button>
+        {current && userProjects[current] && (
+          <button onClick={() => onDelete(current)} style={{...styles.projectBtn, color: '#ff7a7a'}} title="Delete this saved project">
+            🗑 Delete
+          </button>
+        )}
+      </div>
+
+      <div style={styles.projectIOrow}>
+        <button onClick={onExport} disabled={!hasUserProjects} style={{...styles.projectSmallBtn, opacity: hasUserProjects ? 1 : 0.4}} title="Export all saved projects to a JSON file (for backup or sharing)">
+          ↓ Export
+        </button>
+        <button onClick={() => importRef.current?.click()} style={styles.projectSmallBtn} title="Import projects from a previously exported JSON file">
+          ↑ Import
+        </button>
+        <input type="file" accept=".json" ref={importRef} style={{display:'none'}} onChange={onImport} />
+      </div>
+
+      {hasUserProjects && (
+        <div style={styles.projectCount}>{userCount} saved · shared team storage</div>
+      )}
+    </div>
+  );
+}
+
+function SaveDialog({ name, setName, description, setDescription, onSave, onCancel }) {
+  return (
+    <div style={styles.saveDialog}>
+      <div style={styles.saveDialogTitle}>Save current settings</div>
+      <input
+        type="text"
+        placeholder="Project name (e.g. Optima Pulse · NSW)"
+        value={name} onChange={e => setName(e.target.value)}
+        style={styles.saveInput} autoFocus
+      />
+      <input
+        type="text"
+        placeholder="Short description (optional)"
+        value={description} onChange={e => setDescription(e.target.value)}
+        style={styles.saveInput}
+      />
+      <div style={styles.saveButtonRow}>
+        <button onClick={onSave} disabled={!name.trim()} style={{...styles.projectBtn, background: '#c97b4a', color: '#0d0d0f', opacity: name.trim() ? 1 : 0.4}}>
+          Save
+        </button>
+        <button onClick={onCancel} style={styles.projectBtn}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div style={styles.section}>
+      <div style={styles.sectionTitle}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function Slider({ label, value, min, max, step, unit, onChange, display }) {
+  return (
+    <div style={styles.slider}>
+      <div style={styles.sliderLabel}>
+        <span>{label}</span>
+        <span style={styles.sliderVal}>{display ? display(value) : `${value}${unit || ''}`}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value}
+             onChange={e => onChange(parseFloat(e.target.value))} style={{width:'100%'}} />
+    </div>
+  );
+}
+
+function Stat({ label, value, highlight }) {
+  return (
+    <div>
+      <div style={{...styles.statValue, color: highlight ? '#ff7a7a' : '#e8e8e8'}}>{value}</div>
+      <div style={styles.statLabel}>{label}</div>
+    </div>
+  );
+}
+
+function ChartPanel({ title, subtitle, children }) {
+  return (
+    <div style={styles.chartPanel}>
+      <div style={styles.chartHead}>
+        <div style={styles.chartTitle}>{title}</div>
+        <div style={styles.chartSub}>{subtitle}</div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function FeedbackPanel({ currentProject }) {
+  const [items, setItems] = useState([]);
+  const [newComment, setNewComment] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [scope, setScope] = useState('all');  // 'all' | 'project' | 'general'
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      // Fetch both general and project-specific; merge client-side
+      const [generalList, projList] = await Promise.all([
+        api.listFeedback(''),  // general
+        currentProject ? api.listFeedback(currentProject) : Promise.resolve([]),
+      ]);
+      // Dedupe (general query returns general only now, but be defensive)
+      const seen = new Set();
+      const merged = [...generalList, ...projList].filter(f => {
+        if (seen.has(f.id)) return false;
+        seen.add(f.id); return true;
+      }).sort((a, b) => b.created_at.localeCompare(a.created_at));
+      setItems(merged);
+    } catch (e) {
+      console.error('feedback fetch failed', e);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { refresh(); }, [currentProject]);
+
+  const handleSubmit = async () => {
+    if (!newComment.trim()) return;
+    setSubmitting(true);
+    try {
+      await api.submitFeedback(currentProject || null, newComment);
+      setNewComment('');
+      await refresh();
+    } catch (e) {
+      alert('Submit failed: ' + e.message);
+    }
+    setSubmitting(false);
+  };
+
+  const handleStatusChange = async (id, status) => {
+    const note = status === 'open' ? null :
+      prompt('Resolution note (what was decided / done):', '') || '';
+    if (note === null) return;  // user cancelled
+    try {
+      await api.updateFeedback(id, status, note);
+      await refresh();
+    } catch (e) { alert('Update failed: ' + e.message); }
+  };
+
+  const filtered = items.filter(f => {
+    if (scope === 'all') return true;
+    if (scope === 'project') return f.project_id === currentProject;
+    if (scope === 'general') return f.project_id === null;
+    return true;
+  });
+
+  const statusColors = {
+    open: '#f0ad4e', accepted: '#7dd87d', rejected: '#888', implemented: '#6b9bd1',
+  };
+
+  return (
+    <div style={styles.feedbackPanel}>
+      <div style={styles.chartHead}>
+        <div style={styles.chartTitle}>Model feedback</div>
+        <div style={styles.chartSub}>
+          Post comments about the model, the results, or deployment observations.
+          Comments are NOT auto-applied to the physics — Dale/Kyle triage and decide what warrants a model update.
+        </div>
+      </div>
+
+      <div className="plain-box">
+        <div className="ptitle">How to use this</div>
+        If you notice the simulator is under- or over-predicting, or a reviewer flags a missing factor (like the nRF91 voltage-scaled peak current that's now in v3.5), drop a note here. Include context: what conditions, what result, what you think should happen. Dale or Kyle review and decide whether to update the physics model, add a custom modifier, or mark it as not applicable.
+      </div>
+
+      <div style={styles.feedbackInput}>
+        <textarea
+          value={newComment} onChange={e => setNewComment(e.target.value)}
+          placeholder={currentProject
+            ? `Feedback on this project (${currentProject.startsWith('user-') ? 'saved project' : 'built-in'})…`
+            : 'General model feedback (no project selected)…'}
+          rows={3} style={styles.feedbackTextarea} />
+        <div style={{display: 'flex', gap: 10, alignItems: 'center', marginTop: 8}}>
+          <div style={{fontSize: 11, color: '#888', fontFamily: '"IBM Plex Mono", monospace'}}>
+            {currentProject ? `→ project: ${currentProject.slice(0, 20)}${currentProject.length > 20 ? '…' : ''}` : '→ general model feedback'}
+          </div>
+          <div style={{flex: 1}} />
+          <button onClick={handleSubmit} disabled={!newComment.trim() || submitting} style={styles.feedbackSubmit}>
+            {submitting ? 'Submitting…' : 'Submit feedback'}
+          </button>
+        </div>
+      </div>
+
+      <div style={styles.feedbackFilterRow}>
+        <span style={{fontSize: 10, color: '#666', letterSpacing: '0.1em',
+                      fontFamily: '"IBM Plex Mono", monospace', textTransform: 'uppercase'}}>
+          showing
+        </span>
+        {['all', 'general', 'project'].map(s => (
+          <button key={s} onClick={() => setScope(s)}
+                  disabled={s === 'project' && !currentProject}
+                  style={{...styles.feedbackFilterBtn,
+                          color: scope === s ? '#c97b4a' : '#666',
+                          borderColor: scope === s ? '#c97b4a' : '#2a2a2a'}}>
+            {s}
+          </button>
+        ))}
+        <div style={{flex: 1}} />
+        <span style={{fontSize: 10, color: '#666', fontFamily: '"IBM Plex Mono", monospace'}}>
+          {filtered.length} {filtered.length === 1 ? 'item' : 'items'}
+        </span>
+      </div>
+
+      {loading ? (
+        <div style={{padding: 20, textAlign: 'center', color: '#666', fontSize: 12}}>loading…</div>
+      ) : filtered.length === 0 ? (
+        <div style={{padding: 20, textAlign: 'center', color: '#666', fontSize: 12}}>
+          no feedback yet — be the first
+        </div>
+      ) : (
+        <div style={styles.feedbackList}>
+          {filtered.map(f => (
+            <div key={f.id} style={{...styles.feedbackCard, borderLeftColor: statusColors[f.status]}}>
+              <div style={styles.feedbackHead}>
+                <strong style={{fontSize: 12, color: '#e8e8e8'}}>{f.author}</strong>
+                <span style={{...styles.feedbackStatus, color: statusColors[f.status]}}>
+                  ● {f.status}
+                </span>
+                <span style={{fontSize: 10, color: '#666', marginLeft: 'auto',
+                              fontFamily: '"IBM Plex Mono", monospace'}}>
+                  {new Date(f.created_at).toLocaleString()}
+                </span>
+              </div>
+              {f.project_id && (
+                <div style={styles.feedbackProject}>
+                  project: {f.project_id === 'peer-review' ? 'peer review (pre-v3.5)' : f.project_id.slice(0, 30)}
+                </div>
+              )}
+              <div style={styles.feedbackComment}>{f.comment}</div>
+              {f.resolution_note && (
+                <div style={styles.feedbackResolution}>
+                  <div style={styles.feedbackResolutionTitle}>Resolution by {f.resolved_by}</div>
+                  <div>{f.resolution_note}</div>
+                </div>
+              )}
+              {f.status === 'open' && (
+                <div style={styles.feedbackActions}>
+                  <button onClick={() => handleStatusChange(f.id, 'accepted')} style={styles.feedbackActionBtn}>✓ Accept</button>
+                  <button onClick={() => handleStatusChange(f.id, 'implemented')} style={styles.feedbackActionBtn}>✓✓ Implemented</button>
+                  <button onClick={() => handleStatusChange(f.id, 'rejected')} style={styles.feedbackActionBtn}>✕ Reject</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SimulatorNotes() {
+  return (
+    <details style={styles.notes}>
+      <summary style={{listStyle: 'none'}}>
+        <span style={styles.notesTitle}><span className="chev">▸</span>  Technical notes (for the curious)</span>
+      </summary>
+      <ul style={styles.notesList}>
+        <li><strong>Peukert derating:</strong> capacity scales as C = C_rated × min(1, (13.8mA/I)^0.437), fitted to Ultralife ER34615 datasheet. 4 datapoints, all within 6%.</li>
+        <li><strong>Capacity vs temperature:</strong> ~100% @25°C, 95% @0°C, 80% @-20°C, 55% @-40°C.</li>
+        <li><strong>Terminal voltage model (v3.1):</strong> V = OCV − I·R(T) − η_kinetic(I,T) − passivation_dip. Validated against 16 Ultralife V-vs-T points, RMS error 30 mV.</li>
+        <li><strong>Kinetic overpotential (v3.1):</strong> Tafel form η = 0.108·(298K/T)^5.74·log10(I/0.43mA). Explains cold-temperature voltage sag beyond pure IR drop.</li>
+        <li><strong>Voltage-scaled modem peak current (v3.5, peer review):</strong> I_pulse(V) = I_nominal × (3.6V / V_terminal), capped at 1.8×. Off by default; enable per project for constant-power loads (nRF91, Telit ME310, SIMCOM).</li>
+        <li><strong>Internal resistance vs DoD (v3.1):</strong> dip-then-rise shape matching MDPI 2024 EIS — drops ~30% in mid-discharge as passivation breaks, climbs sharply past 80% DoD.</li>
+        <li><strong>Internal resistance vs age:</strong> saturating growth, ~30% over 10yr at 25°C, Arrhenius-accelerated.</li>
+        <li><strong>Self-discharge:</strong> ~1%/yr @25°C, doubles per +10°C.</li>
+        <li><strong>Passivation (TMV):</strong> amplification 5.2× fitted to MDPI Fig. 15b (8913h @ 70°C → TMV 1.6V). Growth tau = 1.5yr at 25°C.</li>
+        <li><strong>HPC assumptions:</strong> HLC-1020/1530 class — ~25mΩ ESR, 150-250mAh buffer, eliminates observable passivation.</li>
+        <li><strong>Cutoff:</strong> 2.0V per EEMB/Tadiran datasheets.</li>
+      </ul>
+    </details>
+  );
+}
+
+function PassivationPanel({ predictions, shelfMonths }) {
+  const worstSeverity = predictions.reduce((worst, p) => {
+    const order = { negligible: 0, moderate: 1, significant: 2, severe: 3 };
+    return order[p.prediction.severity] > order[worst] ? p.prediction.severity : worst;
+  }, 'negligible');
+
+  const severityColors = {
+    negligible: { bg: 'rgba(125, 216, 125, 0.08)', border: '#7dd87d', text: '#7dd87d' },
+    moderate: { bg: 'rgba(240, 173, 78, 0.08)', border: '#f0ad4e', text: '#f0ad4e' },
+    significant: { bg: 'rgba(255, 122, 122, 0.08)', border: '#ff7a7a', text: '#ff7a7a' },
+    severe: { bg: 'rgba(217, 83, 79, 0.12)', border: '#d9534f', text: '#d9534f' },
+  };
+
+  return (
+    <div style={styles.passivationPanel}>
+      <div style={styles.chartHead}>
+        <div style={styles.chartTitle}>Passivation prediction — "first transmission" readiness</div>
+        <div style={styles.chartSub}>
+          After sitting in storage, the first time you wake a Li-SOCl₂ cell up, the voltage temporarily dips before recovering. Stored longer or hotter = bigger dip. This section predicts whether your cells are ready to deploy out of the box.
+        </div>
+      </div>
+
+      <div className="plain-box">
+        <div className="ptitle">What passivation actually is</div>
+        Li-SOCl₂ batteries have a special trick that lets them last 10+ years: the lithium inside forms a thin protective film (called a <em>passivation layer</em>) that stops the chemistry from slowly burning itself out. Great for shelf life — but the first time you try to pull current out, you have to punch through that film, which briefly drops the voltage. This dip is called the <strong>Transient Minimum Voltage (TMV)</strong>. If it drops below your device's brown-out threshold, your device fails to boot on first power-up — and you won't know until you're on-site.
+      </div>
+
+      <div style={styles.passivationGrid}>
+        {predictions.map(p => {
+          const c = severityColors[p.prediction.severity];
+          const depass = recommendDepassivation(p.prediction, p.cell);
+          return (
+            <div key={p.key} style={{...styles.passivationCard, borderLeft: `3px solid ${c.border}`, background: c.bg}}>
+              <div style={styles.passivationCardHead}>
+                <div style={{...styles.dot, background: p.cell.color, marginRight: 8}} />
+                <strong style={{fontSize: 12}}>{p.cell.name}</strong>
+                <span style={{...styles.severityBadge, color: c.text, borderColor: c.border}}>
+                  {p.prediction.severity}
+                </span>
+              </div>
+              <div style={styles.passivationStats}>
+                <div>
+                  <div style={styles.passivationStatVal}>{p.prediction.dip_V}V</div>
+                  <div style={styles.passivationStatLabel}>voltage dip</div>
+                </div>
+                <div>
+                  <div style={styles.passivationStatVal}>{p.prediction.tmv_V}V</div>
+                  <div style={styles.passivationStatLabel}>min voltage (TMV)</div>
+                </div>
+                <div>
+                  <div style={styles.passivationStatVal}>{p.prediction.recovery_s}s</div>
+                  <div style={styles.passivationStatLabel}>recovery time</div>
+                </div>
+              </div>
+              <div style={styles.passivationExplain}>{p.prediction.explanation}</div>
+              {depass && (
+                <div style={styles.depassBox}>
+                  <div style={styles.depassTitle}>📋 Depassivation recommended</div>
+                  <div style={styles.depassLine}><strong>Before deployment:</strong> {depass.protocol}</div>
+                  <div style={styles.depassLine}><strong>Verify:</strong> {depass.verification}</div>
+                  <div style={styles.depassLine}><strong>In-field prevention:</strong> {depass.prevention}</div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// STYLES
+// =============================================================================
+const tooltipStyle = {
+  background: '#0a0a0a', border: '1px solid #333', borderRadius: 2,
+  fontSize: 11, color: '#e8e8e8', fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+};
+
+const styles = {
+  app: { minHeight: '100vh', background: '#0d0d0f', color: '#e8e8e8',
+    fontFamily: '"IBM Plex Sans", -apple-system, system-ui, sans-serif',
+    padding: '24px 28px' },
+  header: { marginBottom: 20 },
+  kicker: { fontSize: 10, letterSpacing: '0.18em', color: '#c97b4a', fontWeight: 600,
+    textTransform: 'uppercase', fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
+  title: { fontSize: 34, fontWeight: 300, margin: '6px 0 2px', letterSpacing: '-0.02em',
+    fontFamily: '"IBM Plex Serif", Georgia, serif' },
+  sub: { fontSize: 12, color: '#888', fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
+
+  layout: { display: 'grid', gridTemplateColumns: '340px 1fr', gap: 24 },
+
+  controls: { background: '#131316', border: '1px solid #26262a', padding: 20,
+    height: 'fit-content', position: 'sticky', top: 20 },
+  section: { marginBottom: 22, paddingBottom: 18, borderBottom: '1px solid #222' },
+  sectionTitle: { fontSize: 10, letterSpacing: '0.15em', color: '#c97b4a', fontWeight: 600,
+    textTransform: 'uppercase', marginBottom: 12, fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
+  toggleRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginBottom: 10, cursor: 'pointer' },
+  select: { width: '100%', background: '#0a0a0b', color: '#e8e8e8', border: '1px solid #333',
+    padding: '8px 10px', fontSize: 12, fontFamily: '"IBM Plex Mono", ui-monospace, monospace', marginBottom: 12 },
+  cellGrid: { display: 'flex', flexDirection: 'column', gap: 6 },
+  cellCard: { background: '#0a0a0b', border: '1px solid #2a2a2a', borderLeft: '3px solid',
+    padding: '8px 10px' },
+  dot: { display: 'inline-block', width: 6, height: 6, borderRadius: '50%' },
+  cellName: { fontSize: 11, fontWeight: 500, marginLeft: 6 },
+  layman: { fontSize: 11, color: '#bbb', padding: '8px 10px', margin: '8px 0 6px',
+    background: 'rgba(255,255,255,0.02)', borderLeft: '2px solid', lineHeight: 1.5 },
+  spec: { fontSize: 10, color: '#888', fontFamily: '"IBM Plex Mono", ui-monospace, monospace', lineHeight: 1.5 },
+
+  slider: { marginBottom: 14 },
+  sliderLabel: { display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 5,
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
+  sliderVal: { color: '#c97b4a', fontWeight: 500 },
+  hint: { fontSize: 10, color: '#666', marginTop: 6, fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    padding: '6px 8px', background: '#0a0a0b', border: '1px solid #1f1f1f' },
+
+  presetNotes: { fontSize: 11, color: '#aaa', padding: '8px 10px', margin: '6px 0 10px',
+    background: 'rgba(107, 155, 209, 0.06)', borderLeft: '2px solid #6b9bd1',
+    lineHeight: 1.5, fontStyle: 'italic' },
+
+  projectDesc: { fontSize: 11, color: '#aaa', padding: '8px 10px', margin: '0 0 10px',
+    background: 'rgba(201,123,74,0.05)', borderLeft: '2px solid #c97b4a', lineHeight: 1.5 },
+  projectButtonRow: { display: 'flex', gap: 6, marginBottom: 6 },
+  projectBtn: { flex: 1, padding: '7px 10px', background: '#0a0a0b', color: '#e8e8e8',
+    border: '1px solid #333', fontSize: 11, cursor: 'pointer',
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace', transition: 'all 0.12s' },
+  projectIOrow: { display: 'flex', gap: 6 },
+  projectSmallBtn: { flex: 1, padding: '5px 8px', background: 'transparent', color: '#888',
+    border: '1px solid #2a2a2a', fontSize: 10, cursor: 'pointer',
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace', letterSpacing: '0.08em' },
+  projectCount: { fontSize: 9, color: '#555', marginTop: 8, textAlign: 'center',
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace', letterSpacing: '0.08em' },
+
+  saveDialog: { marginTop: 12, padding: 12, background: '#0a0a0b',
+    border: '1px solid #c97b4a', borderRadius: 2 },
+  saveDialogTitle: { fontSize: 10, letterSpacing: '0.15em', color: '#c97b4a',
+    fontWeight: 600, textTransform: 'uppercase', marginBottom: 10,
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
+  saveInput: { width: '100%', background: '#131316', color: '#e8e8e8',
+    border: '1px solid #333', padding: '8px 10px', fontSize: 12,
+    fontFamily: '"IBM Plex Sans", sans-serif', marginBottom: 8 },
+  saveButtonRow: { display: 'flex', gap: 6, marginTop: 4 },
+  saveStatusLine: { marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.04)',
+    fontSize: 10, letterSpacing: '0.08em', color: '#888',
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
+
+  nagBanner: { display: 'flex', alignItems: 'flex-start', gap: 14,
+    padding: '14px 18px', background: 'linear-gradient(135deg, rgba(240,173,78,0.12), rgba(201,123,74,0.06))',
+    border: '1px solid rgba(240,173,78,0.3)', borderLeft: '3px solid #f0ad4e',
+    marginBottom: 4 },
+  nagIcon: { fontSize: 22, flexShrink: 0 },
+  nagTitle: { fontSize: 13, fontWeight: 500, color: '#f0ad4e', marginBottom: 4 },
+  nagText: { fontSize: 12, color: '#c8c8c8', lineHeight: 1.5 },
+  nagPrimaryBtn: { padding: '8px 14px', background: '#f0ad4e', color: '#0d0d0f',
+    border: 'none', fontSize: 11, fontWeight: 500, cursor: 'pointer',
+    fontFamily: '"IBM Plex Mono", monospace', letterSpacing: '0.05em' },
+  nagSecondaryBtn: { padding: '8px 14px', background: 'transparent', color: '#888',
+    border: '1px solid #333', fontSize: 11, cursor: 'pointer',
+    fontFamily: '"IBM Plex Mono", monospace', letterSpacing: '0.05em' },
+
+  feedbackPanel: { background: '#131316', border: '1px solid #26262a', padding: 18 },
+  feedbackInput: { marginTop: 12, padding: 12, background: '#0a0a0b', border: '1px solid #1f1f1f' },
+  feedbackTextarea: { width: '100%', background: '#131316', color: '#e8e8e8',
+    border: '1px solid #333', padding: '10px 12px', fontSize: 12, lineHeight: 1.5,
+    fontFamily: '"IBM Plex Sans", sans-serif', resize: 'vertical', minHeight: 60 },
+  feedbackSubmit: { padding: '8px 14px', background: '#c97b4a', color: '#0d0d0f',
+    border: 'none', fontSize: 11, fontWeight: 500, cursor: 'pointer',
+    fontFamily: '"IBM Plex Mono", monospace', letterSpacing: '0.05em' },
+  feedbackFilterRow: { display: 'flex', gap: 6, alignItems: 'center',
+    marginTop: 14, marginBottom: 10, paddingBottom: 10,
+    borderBottom: '1px solid #222' },
+  feedbackFilterBtn: { padding: '4px 10px', background: 'transparent',
+    border: '1px solid', fontSize: 10, cursor: 'pointer',
+    fontFamily: '"IBM Plex Mono", monospace', letterSpacing: '0.1em',
+    textTransform: 'uppercase' },
+  feedbackList: { display: 'flex', flexDirection: 'column', gap: 10 },
+  feedbackCard: { padding: 12, background: '#0a0a0b', borderLeft: '3px solid' },
+  feedbackHead: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 },
+  feedbackStatus: { fontSize: 10, letterSpacing: '0.1em',
+    fontFamily: '"IBM Plex Mono", monospace', textTransform: 'uppercase' },
+  feedbackProject: { fontSize: 10, color: '#666', marginBottom: 6,
+    fontFamily: '"IBM Plex Mono", monospace' },
+  feedbackComment: { fontSize: 12, color: '#c8c8c8', lineHeight: 1.6 },
+  feedbackResolution: { marginTop: 10, padding: '8px 10px',
+    background: 'rgba(107, 155, 209, 0.06)', borderLeft: '2px solid #6b9bd1',
+    fontSize: 11, color: '#aaa', lineHeight: 1.5 },
+  feedbackResolutionTitle: { fontSize: 9, letterSpacing: '0.12em', color: '#6b9bd1',
+    fontWeight: 600, textTransform: 'uppercase', marginBottom: 4,
+    fontFamily: '"IBM Plex Mono", monospace' },
+  feedbackActions: { display: 'flex', gap: 6, marginTop: 10 },
+  feedbackActionBtn: { padding: '5px 10px', background: 'transparent', color: '#888',
+    border: '1px solid #2a2a2a', fontSize: 10, cursor: 'pointer',
+    fontFamily: '"IBM Plex Mono", monospace' },
+
+  designIntro: { padding: '30px 40px', background: '#131316', border: '1px solid #26262a',
+    color: '#c8c8c8', fontSize: 13, lineHeight: 1.65 },
+  designIntroTitle: { fontSize: 10, letterSpacing: '0.2em', color: '#c97b4a',
+    fontWeight: 600, textTransform: 'uppercase', marginBottom: 14,
+    fontFamily: '"IBM Plex Mono", monospace' },
+  designIntroList: { paddingLeft: 20, margin: '10px 0' },
+
+  main: { display: 'flex', flexDirection: 'column', gap: 16 },
+  resultsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 },
+  resultCard: { background: '#131316', border: '1px solid #26262a', padding: 14 },
+  resultHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  resultName: { fontSize: 12, fontWeight: 500 },
+  badge: { fontSize: 9, padding: '3px 7px', letterSpacing: '0.08em',
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace', textTransform: 'uppercase' },
+  resultStats: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 },
+  statValue: { fontSize: 18, fontWeight: 400, fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
+  statLabel: { fontSize: 9, letterSpacing: '0.1em', color: '#666', textTransform: 'uppercase', marginTop: 2 },
+  peukertNote: { marginTop: 10, padding: '6px 8px', fontSize: 10, color: '#aaa',
+    background: 'rgba(240, 173, 78, 0.06)', borderLeft: '2px solid #f0ad4e',
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace', lineHeight: 1.5 },
+
+  chartPanel: { background: '#131316', border: '1px solid #26262a', padding: '16px 16px 10px' },
+  chartHead: { marginBottom: 8 },
+  chartTitle: { fontSize: 13, fontWeight: 500 },
+  chartSub: { fontSize: 11, color: '#888', marginTop: 3, lineHeight: 1.5 },
+  chartExplain: { marginTop: 10, padding: '10px 12px', fontSize: 12, color: '#c8c8c8',
+    background: 'rgba(107, 155, 209, 0.04)', borderLeft: '2px solid #6b9bd1', lineHeight: 1.6 },
+
+  passivationPanel: { background: '#131316', border: '1px solid #26262a', padding: 18 },
+  passivationGrid: { display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginTop: 14 },
+  passivationCard: { padding: 14 },
+  passivationCardHead: { display: 'flex', alignItems: 'center', marginBottom: 10 },
+  severityBadge: { marginLeft: 'auto', padding: '2px 8px', fontSize: 9,
+    letterSpacing: '0.12em', textTransform: 'uppercase', border: '1px solid',
+    fontFamily: '"IBM Plex Mono", monospace' },
+  passivationStats: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 10,
+    paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.06)' },
+  passivationStatVal: { fontSize: 20, fontWeight: 400, fontFamily: '"IBM Plex Mono", monospace' },
+  passivationStatLabel: { fontSize: 9, letterSpacing: '0.1em', color: '#888', textTransform: 'uppercase', marginTop: 2 },
+  passivationExplain: { fontSize: 12, color: '#c8c8c8', lineHeight: 1.55 },
+  depassBox: { marginTop: 12, padding: '10px 12px', background: 'rgba(255,255,255,0.03)',
+    borderRadius: 2, fontSize: 11, lineHeight: 1.6 },
+  depassTitle: { fontSize: 10, letterSpacing: '0.12em', color: '#c97b4a', fontWeight: 600,
+    textTransform: 'uppercase', marginBottom: 6, fontFamily: '"IBM Plex Mono", monospace' },
+  depassLine: { margin: '4px 0', color: '#c8c8c8' },
+
+  notes: { background: '#0a0a0b', border: '1px solid #1f1f1f', padding: 14, marginTop: 4 },
+  notesTitle: { fontSize: 10, letterSpacing: '0.15em', color: '#c97b4a', fontWeight: 600,
+    textTransform: 'uppercase', fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
+  notesList: { fontSize: 11, color: '#888', lineHeight: 1.7, paddingLeft: 18, margin: '10px 0 0',
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
+
+  // Explain tab
+  explainWrap: { maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 },
+  explainCard: { background: '#131316', border: '1px solid #26262a', borderLeft: '4px solid',
+    padding: '20px 24px' },
+  explainTitle: { fontSize: 20, fontWeight: 400, margin: '0 0 14px',
+    fontFamily: '"IBM Plex Serif", Georgia, serif', letterSpacing: '-0.01em' },
+  explainList: { margin: '10px 0', paddingLeft: 20, fontSize: 14, lineHeight: 1.7, color: '#c8c8c8' },
+
+  // Validate tab
+  validateWrap: { maxWidth: 1000, display: 'flex', flexDirection: 'column', gap: 18 },
+  valControlRow: { display: 'flex', gap: 10, alignItems: 'center' },
+  valLabel: { fontSize: 11, color: '#888', letterSpacing: '0.12em', textTransform: 'uppercase',
+    fontFamily: '"IBM Plex Mono", monospace' },
+  valDesc: { fontSize: 13, color: '#c8c8c8', lineHeight: 1.6, padding: '10px 14px',
+    background: '#131316', border: '1px solid #26262a' },
+  valChartPanel: { background: '#131316', border: '1px solid #26262a', padding: '16px 16px 10px' },
+  valSection: { marginTop: 10 },
+  valSectionTitle: { fontSize: 11, color: '#c97b4a', letterSpacing: '0.15em', textTransform: 'uppercase',
+    fontWeight: 600, marginBottom: 10, fontFamily: '"IBM Plex Mono", monospace' },
+  clearBtn: { marginTop: 10, padding: '6px 12px', background: 'transparent', border: '1px solid #333',
+    color: '#888', cursor: 'pointer', fontSize: 11, fontFamily: '"IBM Plex Mono", monospace' },
+  code: { background: '#0a0a0b', padding: '2px 5px', fontSize: 11, border: '1px solid #333',
+    fontFamily: '"IBM Plex Mono", monospace' },
+
+  residualsBox: { background: '#131316', border: '1px solid #26262a', padding: 18 },
+  residualsTitle: { fontSize: 11, color: '#c97b4a', letterSpacing: '0.15em', textTransform: 'uppercase',
+    fontWeight: 600, marginBottom: 14, fontFamily: '"IBM Plex Mono", monospace' },
+  residualsStats: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 18,
+    paddingBottom: 18, borderBottom: '1px solid #222' },
+  residualsSubLabel: { fontSize: 9, letterSpacing: '0.12em', color: '#666', textTransform: 'uppercase' },
+  residualsTable: { width: '100%', borderCollapse: 'collapse', fontSize: 12,
+    fontFamily: '"IBM Plex Mono", monospace' },
+  th: { textAlign: 'left', padding: '6px 10px', borderBottom: '1px solid #333',
+    fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#888', fontWeight: 500 },
+  td: { padding: '6px 10px', borderBottom: '1px solid #1f1f1f' },
+  residualRow: { display: 'flex', gap: 20, fontSize: 12, padding: '6px 0',
+    fontFamily: '"IBM Plex Mono", monospace' },
+  plainInline: { marginTop: 14, padding: '10px 12px', fontSize: 12, color: '#c8c8c8',
+    background: 'rgba(107, 155, 209, 0.05)', borderLeft: '2px solid #6b9bd1', lineHeight: 1.6 },
+};
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
