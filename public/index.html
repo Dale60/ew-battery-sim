@@ -98,14 +98,14 @@ const {
 // last updated and what changed without trawling the changelog.
 // =============================================================================
 const VERSION_INFO = {
-  version: '3.8.12',
+  version: '3.8.13',
   released: '2026-04-22',
-  headline: 'Dead cells now clearly marked in chart AND ranked list',
+  headline: 'Shape key for scatter dots + simplified lines/bars modes',
   details: [
-    'Scatter/line chart dots now use different shapes based on cell status: ● solid = meets target · ○ hollow = V_pulse brownout · ⊗ red = over pulse rating · ◌ dashed = indeterminate beyond-18yr. No more misleading gold dots implying a dead cell "lasted that long at that frequency"',
-    'Ranked list failed cells (V_pulse fail, over-pulse, below-target) are now rendered faded (opacity 0.55) with strikethrough on the cell name and life value. Their status is also spelled out: "dies 3.5yr" instead of just "3.5 yr"',
-    'Added "BELOW TARGET" tag for cells that technically predict a life but don\'t meet the user\'s target',
-    'Chart subtitle now documents the marker legend so new users understand the visual encoding',
+    'Added a visual shape key below the scatter chart showing what each dot marker means: solid = meets target, faded = below target, hollow = V_pulse brownout, red X = over pulse rating, dashed = indeterminate',
+    'Line chart reverted to plain solid dots — the shape encoding was visually conflicting with the connecting lines and making the chart harder to read. Cell status is already shown clearly in the ranked list above',
+    'Bar chart unchanged — status is already encoded via colour + strikethrough in the ranked list. Subtitle now tells user to check the ranked list for status detail',
+    'Shape key only appears in scatter mode (where shapes actually differ), not in lines/bars modes where it would be meaningless',
   ],
 };
 
@@ -2851,9 +2851,9 @@ function DesignChart({ results, targetYears }) {
           <div style={{flex: 1, minWidth: 280}}>
             <div style={styles.chartTitle}>Feasibility envelope</div>
             <div style={styles.chartSub}>
-              {chartStyle === 'scatter' && <>All 36 simulations (6 cells × 6 TX freqs). Dashed line = {targetYears}-year target. Vertical band = chosen freq ({results.targetFreq}).<br/><span style={{fontSize: 10}}>● solid = meets target · ○ hollow = V_pulse brownout · ⊗ red = over pulse rating · ◌ dashed = indeterminate</span></>}
-              {chartStyle === 'line' && `Life-vs-TX-frequency curves per cell. Steeper = more sensitive to TX rate.`}
-              {chartStyle === 'bar' && `Ranked life at your chosen TX frequency (${results.targetFreq}). Green bars meet target.`}
+              {chartStyle === 'scatter' && `All 36 simulations (6 cells × 6 TX freqs). Dashed line = ${targetYears}-year target. Vertical band = chosen freq (${results.targetFreq}).`}
+              {chartStyle === 'line' && `Life-vs-TX-frequency curves per cell. Steeper = more sensitive to TX rate. Status of each cell shown in the ranked list above.`}
+              {chartStyle === 'bar' && `Ranked life at your chosen TX frequency (${results.targetFreq}). Full status detail in the ranked list above.`}
             </div>
           </div>
           <div style={styles.chartStyleSwitcher}>
@@ -2969,40 +2969,7 @@ function DesignChart({ results, targetYears }) {
             {Object.entries(byCell).map(([cellKey, pts]) => (
               <Line key={cellKey} name={CELLS[cellKey].shortName} data={pts}
                     type="monotone" dataKey="y" stroke={CELLS[cellKey].color}
-                    strokeWidth={2}
-                    dot={(props) => {
-                      const { cx, cy, payload } = props;
-                      const color = CELLS[cellKey].color;
-                      if (cx == null || cy == null) return null;
-                      const size = 4;
-                      if (payload.overPulse) {
-                        return (
-                          <g key={`${cellKey}-${payload.freqKey}`}>
-                            <circle cx={cx} cy={cy} r={size} fill="none"
-                                    stroke="#ff5a5a" strokeWidth={1.2} />
-                            <line x1={cx - size*0.7} y1={cy - size*0.7}
-                                  x2={cx + size*0.7} y2={cy + size*0.7}
-                                  stroke="#ff5a5a" strokeWidth={1.2} />
-                            <line x1={cx + size*0.7} y1={cy - size*0.7}
-                                  x2={cx - size*0.7} y2={cy + size*0.7}
-                                  stroke="#ff5a5a" strokeWidth={1.2} />
-                          </g>
-                        );
-                      }
-                      if (payload.pulseFailed) {
-                        return <circle key={`${cellKey}-${payload.freqKey}`}
-                                       cx={cx} cy={cy} r={size} fill="none"
-                                       stroke={color} strokeWidth={1.5} />;
-                      }
-                      if (payload.survivedSimWindow) {
-                        return <circle key={`${cellKey}-${payload.freqKey}`}
-                                       cx={cx} cy={cy} r={size} fill="none"
-                                       stroke={color} strokeWidth={1.2}
-                                       strokeDasharray="2 2" />;
-                      }
-                      return <circle key={`${cellKey}-${payload.freqKey}`}
-                                     cx={cx} cy={cy} r={size} fill={color} />;
-                    }}
+                    strokeWidth={2} dot={{r: 4, fill: CELLS[cellKey].color}}
                     activeDot={{r: 6}} isAnimationActive={false} />
             ))}
           </LineChart>
@@ -3086,6 +3053,68 @@ function DesignChart({ results, targetYears }) {
           </button>
         )}
       </div>
+
+      {/* Shape key — only shown in scatter mode where dot shapes encode status.
+          In line mode dots are all solid (shape would conflict with line continuity),
+          and in bar mode status is handled via strikethrough on the ranked list. */}
+      {chartStyle === 'scatter' && (
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'center',
+          justifyContent: 'center', marginTop: 10, padding: '8px 12px',
+          background: 'rgba(255,255,255,0.02)',
+          fontSize: 11, fontFamily: 'system-ui, sans-serif',
+          color: '#aaa',
+        }}>
+          <span style={{color: '#666', letterSpacing: '0.05em', fontSize: 10,
+                        fontFamily: '"IBM Plex Mono", monospace'}}>
+            SHAPE KEY:
+          </span>
+          {/* Solid — pass */}
+          <span style={{display: 'inline-flex', alignItems: 'center', gap: 6}}>
+            <svg width="14" height="14" viewBox="0 0 14 14">
+              <circle cx="7" cy="7" r="5" fill="#7dd87d" />
+            </svg>
+            meets target
+          </span>
+          {/* Faded solid — below target */}
+          <span style={{display: 'inline-flex', alignItems: 'center', gap: 6}}>
+            <svg width="14" height="14" viewBox="0 0 14 14">
+              <circle cx="7" cy="7" r="5" fill="#7dd87d" fillOpacity="0.4"
+                      stroke="#7dd87d" />
+            </svg>
+            below target
+          </span>
+          {/* Hollow — V_pulse fail */}
+          <span style={{display: 'inline-flex', alignItems: 'center', gap: 6}}>
+            <svg width="14" height="14" viewBox="0 0 14 14">
+              <circle cx="7" cy="7" r="5" fill="none"
+                      stroke="#ff7a7a" strokeWidth="1.5" />
+            </svg>
+            V_pulse brownout
+          </span>
+          {/* Red X — over pulse */}
+          <span style={{display: 'inline-flex', alignItems: 'center', gap: 6}}>
+            <svg width="14" height="14" viewBox="0 0 14 14">
+              <circle cx="7" cy="7" r="5" fill="none"
+                      stroke="#ff5a5a" strokeWidth="1.5" />
+              <line x1="4" y1="4" x2="10" y2="10"
+                    stroke="#ff5a5a" strokeWidth="1.5" />
+              <line x1="10" y1="4" x2="4" y2="10"
+                    stroke="#ff5a5a" strokeWidth="1.5" />
+            </svg>
+            over pulse rating
+          </span>
+          {/* Dashed hollow — indeterminate */}
+          <span style={{display: 'inline-flex', alignItems: 'center', gap: 6}}>
+            <svg width="14" height="14" viewBox="0 0 14 14">
+              <circle cx="7" cy="7" r="5" fill="none"
+                      stroke="#888" strokeWidth="1.5"
+                      strokeDasharray="2 2" />
+            </svg>
+            indeterminate ({'>'}18yr)
+          </span>
+        </div>
+      )}
     </div>
   );
 }
