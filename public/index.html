@@ -98,13 +98,14 @@ const {
 // last updated and what changed without trawling the changelog.
 // =============================================================================
 const VERSION_INFO = {
-  version: '3.8.11',
+  version: '3.8.12',
   released: '2026-04-22',
-  headline: 'Clickable legend — toggle cells on/off for clarity',
+  headline: 'Dead cells now clearly marked in chart AND ranked list',
   details: [
-    'Feasibility envelope chart now has a clickable custom legend. Click any cell name/dot to hide it; click again to show. Applies across all three chart styles (scatter / lines / bars)',
-    'Hidden cells show faded with strikethrough; a "SHOW ALL" button appears when any cell is hidden so you can reset in one click',
-    'Useful for isolating comparisons (e.g. "just the three HPCs side by side") without visual clutter from 6 overlapping cell series',
+    'Scatter/line chart dots now use different shapes based on cell status: ● solid = meets target · ○ hollow = V_pulse brownout · ⊗ red = over pulse rating · ◌ dashed = indeterminate beyond-18yr. No more misleading gold dots implying a dead cell "lasted that long at that frequency"',
+    'Ranked list failed cells (V_pulse fail, over-pulse, below-target) are now rendered faded (opacity 0.55) with strikethrough on the cell name and life value. Their status is also spelled out: "dies 3.5yr" instead of just "3.5 yr"',
+    'Added "BELOW TARGET" tag for cells that technically predict a life but don\'t meet the user\'s target',
+    'Chart subtitle now documents the marker legend so new users understand the visual encoding',
   ],
 };
 
@@ -2603,16 +2604,17 @@ function DesignRecommendations({ results }) {
       <div style={styles.chartHead}>
         <div style={styles.chartTitle}>Cell ranking at {results.targetFreq} TX</div>
         <div style={styles.chartSub}>
-          Sorted by: datasheet pulse rating (⛔ first), then V_pulse brownout (⚡),
-          then margin vs {results.targetYears}-year target. Cells flagged ⛔ exceed the
-          manufacturer's max pulse current — datasheet violation, likely unreliable
-          long-term even if the simulation's IR math predicts survival.
+          ✓ = meets {results.targetYears}-year target. ⚡ = V_pulse brownout (device fails to TX
+          long before then). ⛔ = exceeds datasheet pulse rating (unreliable regardless of sim).
+          Failed cells are shown faded with strikethrough — they're in the list for
+          comparison, not as options.
         </div>
       </div>
       <div style={{display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14}}>
         {results.ranked.map((r, i) => {
           // Feasibility chain: overPulse > pulseFail > margin
           const meetsTarget = r.margin >= 0 && !r.pulseFail && !r.overPulse;
+          const isDead = r.overPulse || r.pulseFail || !meetsTarget;
           const color = r.overPulse ? '#ff5a5a'
                       : r.pulseFail ? '#ff7a7a'
                       : meetsTarget ? (r.margin > 0.3 ? '#7dd87d' : '#f0ad4e')
@@ -2621,13 +2623,30 @@ function DesignRecommendations({ results }) {
                       : r.pulseFail ? '⚡'
                       : meetsTarget ? (r.margin > 0.3 ? '✓' : '⚠')
                       : '✗';
+          // Life label: "died at Xyr" for failed cells, plain life for passes
+          let lifeLabel;
+          if (r.survivedSimWindow) {
+            lifeLabel = `>${r.life.toFixed(0)} yr`;
+          } else if (r.pulseFail || r.overPulse) {
+            lifeLabel = `dies ${r.life.toFixed(1)}yr`;
+          } else {
+            lifeLabel = `${r.life.toFixed(1)} yr`;
+          }
           return (
-            <div key={r.cellKey} style={{...styles.feedbackCard, borderLeftColor: color, padding: '10px 14px'}}>
+            <div key={r.cellKey}
+                 style={{...styles.feedbackCard, borderLeftColor: color,
+                         padding: '10px 14px',
+                         opacity: isDead ? 0.55 : 1.0,
+                         background: isDead ? 'rgba(255,90,90,0.03)' : undefined}}>
               <div style={{display:'flex', alignItems:'center', gap:12}}>
                 <span style={{fontSize: 16, color, width: 20, textAlign: 'center'}}>{icon}</span>
                 <span style={{fontSize: 10, color:'#666', width: 20,
                               fontFamily:'"IBM Plex Mono",monospace'}}>#{i+1}</span>
-                <strong style={{fontSize: 12, color: '#e8e8e8', flex: 1}}>{r.fullName}</strong>
+                <strong style={{fontSize: 12, color: isDead ? '#999' : '#e8e8e8', flex: 1,
+                                textDecoration: isDead ? 'line-through' : 'none',
+                                textDecorationColor: isDead ? 'rgba(255,120,120,0.6)' : undefined}}>
+                  {r.fullName}
+                </strong>
                 {r.overPulse && (
                   <span style={{fontSize: 9, color: '#ff5a5a', background: 'rgba(255,90,90,0.15)',
                                 padding: '2px 6px', letterSpacing: '0.08em',
@@ -2643,6 +2662,13 @@ function DesignRecommendations({ results }) {
                     V_PULSE FAIL
                   </span>
                 )}
+                {!meetsTarget && !r.pulseFail && !r.overPulse && (
+                  <span style={{fontSize: 9, color: '#ff7a7a', background: 'rgba(255,122,122,0.12)',
+                                padding: '2px 6px', letterSpacing: '0.08em',
+                                fontFamily: '"IBM Plex Mono", monospace'}}>
+                    BELOW TARGET
+                  </span>
+                )}
                 {r.survivedSimWindow && (
                   <span style={{fontSize: 9, color: '#888', background: 'rgba(150,150,150,0.12)',
                                 padding: '2px 6px', letterSpacing: '0.08em',
@@ -2652,8 +2678,10 @@ function DesignRecommendations({ results }) {
                   </span>
                 )}
                 <span style={{fontSize: 12, color, fontFamily:'"IBM Plex Mono",monospace',
-                              letterSpacing: '0.05em'}}>
-                  {r.survivedSimWindow ? `>${r.life.toFixed(0)} yr` : `${r.life.toFixed(1)} yr`}
+                              letterSpacing: '0.05em',
+                              textDecoration: isDead ? 'line-through' : 'none',
+                              textDecorationColor: isDead ? 'rgba(255,120,120,0.6)' : undefined}}>
+                  {lifeLabel}
                 </span>
                 <span style={{fontSize: 11, color: '#888', fontFamily:'"IBM Plex Mono",monospace',
                               width: 70, textAlign: 'right'}}>
@@ -2823,7 +2851,7 @@ function DesignChart({ results, targetYears }) {
           <div style={{flex: 1, minWidth: 280}}>
             <div style={styles.chartTitle}>Feasibility envelope</div>
             <div style={styles.chartSub}>
-              {chartStyle === 'scatter' && `All 36 simulations (6 cells × 6 TX freqs). Dashed line = ${targetYears}-year target. Vertical band marks your chosen freq (${results.targetFreq}).`}
+              {chartStyle === 'scatter' && <>All 36 simulations (6 cells × 6 TX freqs). Dashed line = {targetYears}-year target. Vertical band = chosen freq ({results.targetFreq}).<br/><span style={{fontSize: 10}}>● solid = meets target · ○ hollow = V_pulse brownout · ⊗ red = over pulse rating · ◌ dashed = indeterminate</span></>}
               {chartStyle === 'line' && `Life-vs-TX-frequency curves per cell. Steeper = more sensitive to TX rate.`}
               {chartStyle === 'bar' && `Ranked life at your chosen TX frequency (${results.targetFreq}). Green bars meet target.`}
             </div>
@@ -2868,9 +2896,51 @@ function DesignChart({ results, targetYears }) {
             {targetIdx >= 0 && (
               <ReferenceLine x={targetIdx} stroke="#888" strokeDasharray="2 4" strokeOpacity={0.5} />
             )}
+            {/* Custom scatter dots: visual status indicates failure mode.
+                Solid = concrete pass. Hollow-with-X = V_pulse failed.
+                Crossed = over pulse rating. Dashed-hollow = indeterminate. */}
             {Object.entries(byCell).map(([cellKey, pts]) => (
               <Scatter key={cellKey} name={CELLS[cellKey].shortName} data={pts}
-                       fill={CELLS[cellKey].color} />
+                       fill={CELLS[cellKey].color}
+                       shape={(props) => {
+                         const { cx, cy, payload } = props;
+                         const color = CELLS[cellKey].color;
+                         if (cx == null || cy == null) return null;
+                         const size = 6;
+                         if (payload.overPulse) {
+                           // Red X — hard disqualified
+                           return (
+                             <g>
+                               <circle cx={cx} cy={cy} r={size} fill="none"
+                                       stroke="#ff5a5a" strokeWidth={1.5} />
+                               <line x1={cx - size*0.6} y1={cy - size*0.6}
+                                     x2={cx + size*0.6} y2={cy + size*0.6}
+                                     stroke="#ff5a5a" strokeWidth={1.5} />
+                               <line x1={cx + size*0.6} y1={cy - size*0.6}
+                                     x2={cx - size*0.6} y2={cy + size*0.6}
+                                     stroke="#ff5a5a" strokeWidth={1.5} />
+                             </g>
+                           );
+                         }
+                         if (payload.pulseFailed) {
+                           // Hollow circle outlined in cell colour
+                           return <circle cx={cx} cy={cy} r={size} fill="none"
+                                          stroke={color} strokeWidth={1.5} />;
+                         }
+                         if (payload.survivedSimWindow) {
+                           // Dashed hollow
+                           return <circle cx={cx} cy={cy} r={size} fill="none"
+                                          stroke={color} strokeWidth={1.5}
+                                          strokeDasharray="2 2" />;
+                         }
+                         if (!payload.targetMet) {
+                           // Failed target but passed pulse — faded solid
+                           return <circle cx={cx} cy={cy} r={size} fill={color}
+                                          fillOpacity={0.4} stroke={color} />;
+                         }
+                         // Concrete pass — solid
+                         return <circle cx={cx} cy={cy} r={size} fill={color} />;
+                       }} />
             ))}
           </ScatterChart>
         )}
@@ -2899,7 +2969,40 @@ function DesignChart({ results, targetYears }) {
             {Object.entries(byCell).map(([cellKey, pts]) => (
               <Line key={cellKey} name={CELLS[cellKey].shortName} data={pts}
                     type="monotone" dataKey="y" stroke={CELLS[cellKey].color}
-                    strokeWidth={2} dot={{r: 4, fill: CELLS[cellKey].color}}
+                    strokeWidth={2}
+                    dot={(props) => {
+                      const { cx, cy, payload } = props;
+                      const color = CELLS[cellKey].color;
+                      if (cx == null || cy == null) return null;
+                      const size = 4;
+                      if (payload.overPulse) {
+                        return (
+                          <g key={`${cellKey}-${payload.freqKey}`}>
+                            <circle cx={cx} cy={cy} r={size} fill="none"
+                                    stroke="#ff5a5a" strokeWidth={1.2} />
+                            <line x1={cx - size*0.7} y1={cy - size*0.7}
+                                  x2={cx + size*0.7} y2={cy + size*0.7}
+                                  stroke="#ff5a5a" strokeWidth={1.2} />
+                            <line x1={cx + size*0.7} y1={cy - size*0.7}
+                                  x2={cx - size*0.7} y2={cy + size*0.7}
+                                  stroke="#ff5a5a" strokeWidth={1.2} />
+                          </g>
+                        );
+                      }
+                      if (payload.pulseFailed) {
+                        return <circle key={`${cellKey}-${payload.freqKey}`}
+                                       cx={cx} cy={cy} r={size} fill="none"
+                                       stroke={color} strokeWidth={1.5} />;
+                      }
+                      if (payload.survivedSimWindow) {
+                        return <circle key={`${cellKey}-${payload.freqKey}`}
+                                       cx={cx} cy={cy} r={size} fill="none"
+                                       stroke={color} strokeWidth={1.2}
+                                       strokeDasharray="2 2" />;
+                      }
+                      return <circle key={`${cellKey}-${payload.freqKey}`}
+                                     cx={cx} cy={cy} r={size} fill={color} />;
+                    }}
                     activeDot={{r: 6}} isAnimationActive={false} />
             ))}
           </LineChart>
