@@ -98,13 +98,14 @@ const {
 // last updated and what changed without trawling the changelog.
 // =============================================================================
 const VERSION_INFO = {
-  version: '3.8.6',
+  version: '3.8.7',
   released: '2026-04-22',
-  headline: 'Pulse-rating enforcement + Model Fidelity notes',
+  headline: 'Three-cap life model + transparent "why this number" tooltips',
   details: [
-    'Design tab now enforces datasheet pulse-current ratings: cells pushed beyond 120% of their rated max pulse (I_pulse_rated × 1.2 including voltage-scaled inrush) get a ⛔ OVER PULSE RATING flag and drop below V_pulse-fail cells in the ranking. Prevents false-positives where Bobbin D at 520mA looked "feasible" on energy alone',
-    'New Model Fidelity card in the How-this-works tab documents exactly what\'s modelled well (Peukert at moderate current, temperature capacity, IR-based sag, passivation) vs what\'s approximated (cold pulse derate, duty-cycle recovery, pulse-rating life reduction). Cites Saft, Long Sing, Ye 2023, Cheng 2016, and Ahotech 2026 as source data',
-    'Honest error bands: ±25% on life under moderate conditions, up to 2× under harsh conditions (sub-zero + high peak current + sub-5-min TX). Always benchtop-test before committing to the field',
+    'Life predictions now apply THREE independent caps: (1) raw energy integration — what the sim computes from the load profile, (2) self-discharge upper bound — cap / (load + SD_fraction × cap), and (3) manufacturer rated ceiling — Saft\'s own "designed for X-to-Y year applications" language. Reported life = min of the three. Fixes the bug where A×2 was reporting 25yr and bobbins were hitting 78yr — physically impossible ceilings now enforced',
+    'Every chart data point tooltip now shows WHY the prediction is what it is: the binding constraint (energy / self-discharge / rated ceiling / V_pulse), the datasheet source for that constraint (e.g. "Saft LSH range: 2–10+ year applications"), and all three cap values for cross-check. Users can instantly see if the number is conservative or sitting at a chemistry limit',
+    'Cell definitions now include ratedLife_yr_max and ratedLife_source fields pulled from Saft LS/LSH published application ranges: Bobbin D 20yr, Spiral D 10yr, HPC hybrids 15yr, A×2 8yr',
+    'Removed the 25yr display cap that was hiding the underlying over-prediction issue. Y-axis auto-scales to data',
   ],
 };
 
@@ -123,6 +124,8 @@ const CELLS = {
     tempMin: -55, tempMax: 85,
     color: '#f0c674',
     supplier: 'Long Sing / Fanso ER34615 — 19 Ah nominal (JIS-standard D-cell)',
+    ratedLife_yr_max: 20,
+    ratedLife_source: 'Saft LS range: designed for 5–20+ year applications',
   },
   'ER34615M': {
     name: 'ER34615M (Spiral D)',
@@ -138,6 +141,8 @@ const CELLS = {
     tempMin: -55, tempMax: 85,
     color: '#e5534b',
     supplier: 'Long Sing ER34615M — 14 Ah spiral',
+    ratedLife_yr_max: 10,
+    ratedLife_source: 'Saft LSH range: designed for 2–10+ year applications (spiral construction)',
   },
 
   // Three HPC variants from Long Sing drawings (April 2026)
@@ -158,6 +163,8 @@ const CELLS = {
     tempMin: -55, tempMax: 85,
     color: '#6cbbf2',
     supplier: 'Long Sing P101001460 — ≥3.35V @ 5Ω load',
+    ratedLife_yr_max: 15,
+    ratedLife_source: 'Bobbin base (LS, 20 yr ceiling) paired with HPC that itself ages — HPC-equipped packs typically rated 10–15 yr',
     loadV_5ohm: 3.35,
   },
   'ER34615_HPC1530': {
@@ -175,6 +182,8 @@ const CELLS = {
     tempMin: -55, tempMax: 85,
     color: '#2dc0a5',
     supplier: 'Long Sing P101001470 — ≥3.40V @ 5Ω load',
+    ratedLife_yr_max: 15,
+    ratedLife_source: 'Bobbin base (LS, 20 yr ceiling) paired with HPC that itself ages — HPC-equipped packs typically rated 10–15 yr',
     loadV_5ohm: 3.40,
   },
   'ER34615_HPC1550': {
@@ -192,6 +201,8 @@ const CELLS = {
     tempMin: -55, tempMax: 85,
     color: '#a78bfa',
     supplier: 'Long Sing P101001480 — ≥3.45V @ 5Ω load, 3.5A PPTC',
+    ratedLife_yr_max: 15,
+    ratedLife_source: 'Bobbin base (LS, 20 yr ceiling) paired with HPC that itself ages — HPC-equipped packs typically rated 10–15 yr',
     loadV_5ohm: 3.45,
   },
 
@@ -211,6 +222,8 @@ const CELLS = {
     tempMin: -55, tempMax: 85,
     color: '#ef6aa2',
     supplier: 'Fanso ER18505M × 2 — 3.5 Ah each, 7 Ah total',
+    ratedLife_yr_max: 8,
+    ratedLife_source: 'Saft LSH spiral A-cell: designed for 2–10+ year applications; pack pairing lowers ceiling to ~8 yr',
   },
 };
 
@@ -1875,28 +1888,79 @@ function DesignPanel() {
             idx > 2 && pt.V_pulse < r.cell.cutoffV
           );
 
-          // Honest life estimate: if cell died in sim window, use deadYears.
-          // Otherwise project remaining life from usable_mAh and avgCurrent_mA.
-          let achievedLife;
+          // === THREE-CAP LIFE MODEL (v3.8.7) ==========================
+          // Honest life = min of three independent upper bounds. Track which
+          // one is binding so the UI can explain WHY a cell shows the number
+          // it shows (and surface the supporting datasheet reference).
+          //
+          //   1) life_energy     — raw Peukert integration from sim
+          //                        (cap / avg_current, what we had before)
+          //   2) life_sd         — self-discharge closed-form upper bound
+          //                        cap / (avg_current + SD_frac × cap)
+          //                        No matter how low the load, self-discharge
+          //                        drains X% per year. Over 100/X years SD
+          //                        alone has eaten the whole cell.
+          //   3) life_rated      — manufacturer's own "designed for X-to-Y
+          //                        year applications" ceiling. Saft LS
+          //                        bobbin = 20yr, LSH spiral = 10yr, etc.
+          //                        No amount of benign loading gets you past
+          //                        this — passivation, seal creep, and SD
+          //                        compound beyond it.
+          //
+          // achievedLife = min(life_energy, life_sd, life_rated)
+          // limitingFactor = whichever produced the minimum
+          // =============================================================
+
+          // Step 1 — raw energy-integration life (what we had)
+          let life_energy;
           if (r.deadYears) {
-            achievedLife = r.deadYears;
+            life_energy = r.deadYears;
           } else if (r.avgCurrent_mA > 0 && r.usable_mAh > 0) {
-            // Project: remaining capacity at end of sim / avg current → hours → years
             const lastPoint = r.data[r.data.length - 1];
             const remaining_mAh = (lastPoint.soc / 100) * r.usable_mAh;
             const hoursLeft = remaining_mAh / r.avgCurrent_mA;
             const yearsLeft = hoursLeft / (24 * 365);
-            achievedLife = lastPoint.years + yearsLeft;
+            life_energy = lastPoint.years + yearsLeft;
           } else {
-            achievedLife = SIM_DURATION_YRS;
+            life_energy = SIM_DURATION_YRS;
           }
 
-          // If pulse voltage fails, treat life as the year when pulse-fail began
-          // (functional failure trumps capacity-based "survival")
+          // Step 2 — self-discharge closed-form upper bound
+          // cap_mAh = load_per_year × years + SD_fraction × cap × years
+          //   => years = cap / (load_per_year + SD_fraction × cap)
+          const cap_mAh = cell.capacity_Ah_25C * 1000;
+          const loadPerYear_mAh = (r.avgCurrent_mA || 0) * 24 * 365;
+          const SD_frac = (cell.selfDischarge_pctYear_25C || 1.0) / 100;
+          const SD_load_mAh_yr = SD_frac * cap_mAh;
+          const life_sd = (loadPerYear_mAh + SD_load_mAh_yr) > 0
+            ? cap_mAh / (loadPerYear_mAh + SD_load_mAh_yr)
+            : SIM_DURATION_YRS;
+
+          // Step 3 — manufacturer-rated life ceiling
+          const life_rated = cell.ratedLife_yr_max || 20;
+
+          // Combine + track binding constraint
+          let achievedLife = Math.min(life_energy, life_sd, life_rated);
+          let limitingFactor, limitingSource;
+          if (achievedLife === life_rated) {
+            limitingFactor = 'rated ceiling';
+            limitingSource = cell.ratedLife_source || 'Manufacturer rated life';
+          } else if (achievedLife === life_sd) {
+            limitingFactor = 'self-discharge';
+            limitingSource = `${cell.selfDischarge_pctYear_25C}%/yr SD: after ~${(100 / cell.selfDischarge_pctYear_25C).toFixed(0)}yr, cell is self-drained`;
+          } else {
+            limitingFactor = 'energy capacity';
+            limitingSource = `${cell.capacity_Ah_25C}Ah nominal / ${(r.avgCurrent_mA || 0).toFixed(3)}mA avg load`;
+          }
+
+          // V_pulse brownout STILL trumps all three caps — functional failure
+          // happens at whatever year pulse first dips below cutoff.
           if (pulseFailed) {
             const firstFailPoint = r.data.find(pt => pt.V_pulse < r.cell.cutoffV);
             if (firstFailPoint && firstFailPoint.years < achievedLife) {
               achievedLife = firstFailPoint.years;
+              limitingFactor = 'V_pulse brownout';
+              limitingSource = `Pulse voltage drops below ${r.cell.cutoffV}V — device resets on TX`;
             }
           }
 
@@ -1907,7 +1971,12 @@ function DesignPanel() {
             freqKey: freq.key,
             freqLabel: freq.label,
             period_s: freq.period_s,
-            life: Math.min(achievedLife, 25),
+            life: achievedLife,               // no more 25yr cap — show honest number
+            life_energy,
+            life_sd,
+            life_rated,
+            limitingFactor,
+            limitingSource,
             targetMet: achievedLife >= targetYears && !pulseFailed && !overPulse,
             pulseFailed,
             overPulse,
@@ -1918,8 +1987,12 @@ function DesignPanel() {
           // Track best at target frequency
           if (freq.key === txFreq) {
             const margin = (achievedLife - targetYears) / targetYears;
-            cellBest[cellKey] = { life: achievedLife, freq: freq.key, margin,
-                                  pulseFail: pulseFailed, overPulse, overPulseRatio };
+            cellBest[cellKey] = {
+              life: achievedLife, freq: freq.key, margin,
+              pulseFail: pulseFailed, overPulse, overPulseRatio,
+              life_energy, life_sd, life_rated,
+              limitingFactor, limitingSource,
+            };
           }
         }
       }
@@ -2236,36 +2309,88 @@ function DesignChart({ results, targetYears }) {
   const barData = results.ranked.map(r => ({
     name: CELLS[r.cellKey].shortName,
     cellKey: r.cellKey,
-    life: Math.min(r.life, 25),
-    meetsTarget: r.margin >= 0 && !r.pulseFail,
+    life: r.life,
+    meetsTarget: r.margin >= 0 && !r.pulseFail && !r.overPulse,
     pulseFail: r.pulseFail,
+    overPulse: r.overPulse,
     margin: r.margin,
     color: CELLS[r.cellKey].color,
+    limitingFactor: r.limitingFactor,
+    limitingSource: r.limitingSource,
+    life_energy: r.life_energy,
+    life_sd: r.life_sd,
+    life_rated: r.life_rated,
   })).sort((a, b) => b.life - a.life);
 
   const customTooltip = ({ payload }) => {
     if (!payload || !payload[0]) return null;
     const d = payload[0].payload;
+
+    // Colour code limiting factor
+    const factorColor = d.limitingFactor === 'rated ceiling' ? '#a78bfa'
+                      : d.limitingFactor === 'self-discharge' ? '#6cbbf2'
+                      : d.limitingFactor === 'V_pulse brownout' ? '#ff7a7a'
+                      : '#f0c674'; // energy capacity
+
     return (
-      <div style={{background: '#131316', border: '1px solid #333', padding: '8px 12px',
-                   fontSize: 11, fontFamily: '"IBM Plex Mono", monospace'}}>
-        <div style={{color: d.cellColor || d.color, fontWeight: 600, marginBottom: 4}}>
+      <div style={{background: '#131316', border: '1px solid #333', padding: '10px 12px',
+                   fontSize: 11, fontFamily: '"IBM Plex Mono", monospace',
+                   maxWidth: 340}}>
+        <div style={{color: d.cellColor || d.color, fontWeight: 600, marginBottom: 4,
+                     fontSize: 12}}>
           {d.cellName || d.name}
         </div>
-        <div style={{color: '#ccc'}}>
-          {d.freqLabel ? `every ${d.freqLabel}: ` : 'life: '}
+        <div style={{color: '#e8e8e8', fontSize: 13, marginBottom: 8}}>
           {(d.life).toFixed(1)} yr
+          {d.freqLabel && <span style={{color: '#888', fontSize: 11}}> @ every {d.freqLabel}</span>}
         </div>
-        {d.pulseFailed && <div style={{color: '#ff7a7a'}}>⚡ V_pulse brownout</div>}
-        {d.pulseFail && <div style={{color: '#ff7a7a'}}>⚡ V_pulse brownout</div>}
-        {typeof d.margin === 'number' && (
-          <div style={{color: d.meetsTarget ? '#7dd87d' : '#ff7a7a'}}>
-            {d.margin >= 0 ? '+' : ''}{(d.margin * 100).toFixed(0)}% vs target
+
+        {/* Status flags */}
+        {d.overPulse && (
+          <div style={{color: '#ff5a5a', marginBottom: 4}}>
+            ⛔ exceeds datasheet pulse rating
           </div>
         )}
-        {typeof d.targetMet === 'boolean' && (
-          <div style={{color: d.targetMet ? '#7dd87d' : '#ff7a7a'}}>
+        {(d.pulseFailed || d.pulseFail) && (
+          <div style={{color: '#ff7a7a', marginBottom: 4}}>⚡ V_pulse brownout</div>
+        )}
+        {typeof d.margin === 'number' && (
+          <div style={{color: d.meetsTarget ? '#7dd87d' : '#ff7a7a', marginBottom: 6}}>
+            {d.margin >= 0 ? '+' : ''}{(d.margin * 100).toFixed(0)}% vs target
+            {d.meetsTarget ? ' ✓' : ' ✗'}
+          </div>
+        )}
+        {typeof d.targetMet === 'boolean' && !d.overPulse && !d.pulseFailed && (
+          <div style={{color: d.targetMet ? '#7dd87d' : '#ff7a7a', marginBottom: 6}}>
             {d.targetMet ? '✓ meets target' : '✗ below target'}
+          </div>
+        )}
+
+        {/* Why this number — the 3-cap breakdown */}
+        {d.limitingFactor && (
+          <div style={{borderTop: '1px solid #2a2a2a', paddingTop: 6, marginTop: 4}}>
+            <div style={{color: '#888', fontSize: 9, letterSpacing: '0.1em',
+                         marginBottom: 4}}>LIMITED BY</div>
+            <div style={{color: factorColor, fontWeight: 600, marginBottom: 4,
+                         textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.05em'}}>
+              {d.limitingFactor}
+            </div>
+            {d.limitingSource && (
+              <div style={{color: '#ccc', fontSize: 10, lineHeight: 1.4,
+                           fontFamily: 'system-ui, sans-serif'}}>
+                {d.limitingSource}
+              </div>
+            )}
+
+            {/* Show all 3 caps for transparency */}
+            {typeof d.life_energy === 'number' && (
+              <div style={{marginTop: 8, paddingTop: 6, borderTop: '1px dashed #2a2a2a',
+                           color: '#888', fontSize: 9, lineHeight: 1.6}}>
+                energy: {d.life_energy > 99 ? '∞' : d.life_energy.toFixed(1) + 'yr'} &nbsp;·&nbsp;
+                SD: {d.life_sd > 99 ? '∞' : d.life_sd.toFixed(1) + 'yr'} &nbsp;·&nbsp;
+                rated: {d.life_rated}yr
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -2316,7 +2441,7 @@ function DesignChart({ results, targetYears }) {
                    stroke="#888" tick={{fill: '#888', fontSize: 11}}
                    label={{value: 'TX frequency', position: 'insideBottom', offset: -10,
                            fill: '#888', fontSize: 11}} />
-            <YAxis type="number" dataKey="y" name="Life" domain={[0, 25]}
+            <YAxis type="number" dataKey="y" name="Life" domain={[0, Math.max(25, targetYears * 1.5, ...data.map(d => d.y || 0))]}
                    stroke="#888" tick={{fill: '#888', fontSize: 11}}
                    label={{value: 'Achievable life (yr)', angle: -90,
                            position: 'insideLeft', fill: '#888', fontSize: 11}} />
@@ -2345,7 +2470,7 @@ function DesignChart({ results, targetYears }) {
                    stroke="#888" tick={{fill: '#888', fontSize: 11}}
                    label={{value: 'TX frequency', position: 'insideBottom', offset: -10,
                            fill: '#888', fontSize: 11}} />
-            <YAxis type="number" domain={[0, 25]}
+            <YAxis type="number" domain={[0, Math.max(25, targetYears * 1.5, ...data.map(d => d.y || 0))]}
                    stroke="#888" tick={{fill: '#888', fontSize: 11}}
                    label={{value: 'Achievable life (yr)', angle: -90,
                            position: 'insideLeft', fill: '#888', fontSize: 11}} />
