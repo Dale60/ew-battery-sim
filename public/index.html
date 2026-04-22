@@ -98,13 +98,13 @@ const {
 // last updated and what changed without trawling the changelog.
 // =============================================================================
 const VERSION_INFO = {
-  version: '3.8.10',
+  version: '3.8.11',
   released: '2026-04-22',
-  headline: 'Critical fix: physics model was silently reading undefined fields',
+  headline: 'Clickable legend — toggle cells on/off for clarity',
   details: [
-    'PHYSICS_V2 module was reading cell.OCV (uppercase) and cell.IR_mOhm_fresh, but the JS cell definitions use cell.ocv (lowercase) and cell.internalR_mOhm_25C. JavaScript returned undefined for these, making V_pulse calculations produce NaN, which never triggered failure checks — so every low-duty cell "survived" the sim window regardless of chemistry',
-    'This is why A×2 (7Ah) was showing >18yr at daily TX despite Bobbin D (19Ah, 2.7× more capacity) also showing the same — the physics was broken and reporting ceiling values for both',
-    'Field names now correctly match. Expected new results at 15°C NB-IoT Good coverage daily: A×2 ~7yr V_pulse, Spiral D ~8.5yr, HPC1520 ~13.7yr, HPC1530 ~15.5yr, HPC1550 ~17.3yr. Bobbin D still ⛔ over pulse rating',
+    'Feasibility envelope chart now has a clickable custom legend. Click any cell name/dot to hide it; click again to show. Applies across all three chart styles (scatter / lines / bars)',
+    'Hidden cells show faded with strikethrough; a "SHOW ALL" button appears when any cell is hidden so you can reset in one click',
+    'Useful for isolating comparisons (e.g. "just the three HPCs side by side") without visual clutter from 6 overlapping cell series',
   ],
 };
 
@@ -2675,19 +2675,31 @@ function DesignChart({ results, targetYears }) {
   //   bar:     horizontal bars at the USER'S chosen freq only, cleanest "which cell" view
   const [chartStyle, setChartStyle] = useState('scatter');
 
-  // Chart Y-axis ceiling: respect the same clamp as the axis domain so points
-  // that "survived sim window" render at the ceiling instead of shooting off-chart.
+  // Cell visibility toggle. Starts with all cells visible; clicking a legend
+  // entry toggles that cell on/off. Helps when the scatter gets crowded and
+  // user wants to compare just 2-3 cells (e.g. HPC variants side-by-side).
+  const allCellKeys = Object.keys(CELLS);
+  const [visibleCells, setVisibleCells] = useState(() =>
+    Object.fromEntries(allCellKeys.map(k => [k, true]))
+  );
+  const toggleCell = (k) => setVisibleCells(prev => ({ ...prev, [k]: !prev[k] }));
+  const setAllCells = (val) =>
+    setVisibleCells(Object.fromEntries(allCellKeys.map(k => [k, val])));
+  const anyHidden = allCellKeys.some(k => !visibleCells[k]);
+
   // Chart Y-axis ceiling: capped at 18yr because nothing we realistically
   // model can be trusted beyond that. Cells that "survive" longer in the sim
   // are flagged survivedSimWindow and shown as ">18yr" rather than a number.
   const Y_MAX = Math.min(18, Math.max(targetYears * 2, 12));
 
   const periodIndices = TX_FREQUENCIES.map((f, i) => ({ ...f, x: i }));
-  const data = results.scatterData.map(d => ({
-    ...d,
-    x: periodIndices.findIndex(p => p.key === d.freqKey),
-    y: Math.min(d.life, Y_MAX),
-  }));
+  const data = results.scatterData
+    .filter(d => visibleCells[d.cellKey])
+    .map(d => ({
+      ...d,
+      x: periodIndices.findIndex(p => p.key === d.freqKey),
+      y: Math.min(d.life, Y_MAX),
+    }));
 
   // Group by cell for line/scatter per-series rendering
   const byCell = {};
@@ -2699,7 +2711,9 @@ function DesignChart({ results, targetYears }) {
   Object.values(byCell).forEach(arr => arr.sort((a, b) => a.x - b.x));
 
   // Bar-mode data: one row per cell, showing life at the user's target freq
-  const barData = results.ranked.map(r => ({
+  const barData = results.ranked
+    .filter(r => visibleCells[r.cellKey])
+    .map(r => ({
     name: CELLS[r.cellKey].shortName,
     cellKey: r.cellKey,
     life: Math.min(r.life, Y_MAX),   // clamp so bar doesn't exceed chart scale
@@ -2858,7 +2872,6 @@ function DesignChart({ results, targetYears }) {
               <Scatter key={cellKey} name={CELLS[cellKey].shortName} data={pts}
                        fill={CELLS[cellKey].color} />
             ))}
-            <Legend wrapperStyle={{fontSize: 11, paddingTop: 10}} />
           </ScatterChart>
         )}
 
@@ -2889,7 +2902,6 @@ function DesignChart({ results, targetYears }) {
                     strokeWidth={2} dot={{r: 4, fill: CELLS[cellKey].color}}
                     activeDot={{r: 6}} isAnimationActive={false} />
             ))}
-            <Legend wrapperStyle={{fontSize: 11, paddingTop: 10}} />
           </LineChart>
         )}
 
@@ -2897,7 +2909,7 @@ function DesignChart({ results, targetYears }) {
           <BarChart data={barData} layout="vertical"
                     margin={{top: 10, right: 50, left: 10, bottom: 20}}>
             <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
-            <XAxis type="number" domain={[0, Math.min(25, Math.max(targetYears * 2, 18))]}
+            <XAxis type="number" domain={[0, Y_MAX]}
                    stroke="#888" tick={{fill: '#888', fontSize: 11}}
                    label={{value: 'Achievable life (yr)', position: 'insideBottom',
                            offset: -5, fill: '#888', fontSize: 11}} />
@@ -2918,6 +2930,59 @@ function DesignChart({ results, targetYears }) {
           </BarChart>
         )}
       </ResponsiveContainer>
+
+      {/* Custom legend — clickable entries toggle cell visibility on/off.
+          Hidden cells get faded style and struck-through text. Double-click or
+          the "show all"/"hide all" links reset. */}
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center',
+        justifyContent: 'center', marginTop: 12, paddingTop: 10,
+        borderTop: '1px solid #1a1a1a',
+      }}>
+        {allCellKeys.map(k => {
+          const visible = visibleCells[k];
+          const cellColor = CELLS[k].color;
+          return (
+            <button key={k} type="button"
+                    onClick={() => toggleCell(k)}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      padding: '3px 6px',
+                      cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      opacity: visible ? 1 : 0.35,
+                      transition: 'opacity 0.15s',
+                      fontFamily: 'system-ui, sans-serif',
+                    }}
+                    title={visible ? 'Click to hide' : 'Click to show'}>
+              <span style={{
+                width: 10, height: 10, borderRadius: '50%',
+                background: visible ? cellColor : 'transparent',
+                border: `2px solid ${cellColor}`,
+                display: 'inline-block',
+              }} />
+              <span style={{
+                fontSize: 12, color: visible ? '#e8e8e8' : '#666',
+                textDecoration: visible ? 'none' : 'line-through',
+              }}>
+                {CELLS[k].shortName}
+              </span>
+            </button>
+          );
+        })}
+        {anyHidden && (
+          <button type="button" onClick={() => setAllCells(true)}
+                  style={{
+                    background: 'transparent', border: '1px solid #333',
+                    color: '#888', padding: '3px 10px', cursor: 'pointer',
+                    fontSize: 10, fontFamily: '"IBM Plex Mono", monospace',
+                    letterSpacing: '0.08em', marginLeft: 8,
+                  }}>
+            SHOW ALL
+          </button>
+        )}
+      </div>
     </div>
   );
 }

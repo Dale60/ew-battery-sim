@@ -177,7 +177,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 
 // Health check (for Nginx Proxy Manager / uptime monitoring)
-app.get('/healthz', (_req, res) => res.json({ ok: true, version: '3.8.10' }));
+app.get('/healthz', (_req, res) => res.json({ ok: true, version: '3.8.11' }));
 
 // -----------------------------------------------------------------------------
 // Auth endpoints
