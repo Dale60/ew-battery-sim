@@ -70,6 +70,10 @@
     .layout { grid-template-columns: 1fr !important; }
     .controls { position: static !important; }
   }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
 </style>
 
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -98,14 +102,14 @@ const {
 // last updated and what changed without trawling the changelog.
 // =============================================================================
 const VERSION_INFO = {
-  version: '3.8.13',
+  version: '3.8.14',
   released: '2026-04-22',
-  headline: 'Shape key for scatter dots + simplified lines/bars modes',
+  headline: 'Auto re-analyse on any input change — no more stale results',
   details: [
-    'Added a visual shape key below the scatter chart showing what each dot marker means: solid = meets target, faded = below target, hollow = V_pulse brownout, red X = over pulse rating, dashed = indeterminate',
-    'Line chart reverted to plain solid dots — the shape encoding was visually conflicting with the connecting lines and making the chart harder to read. Cell status is already shown clearly in the ranked list above',
-    'Bar chart unchanged — status is already encoded via colour + strikethrough in the ranked list. Subtitle now tells user to check the ranked list for status detail',
-    'Shape key only appears in scatter mode (where shapes actually differ), not in lines/bars modes where it would be meaningless',
+    'Any sidebar change — target years, temperature sliders, backhaul, TX interval, coverage, shelf time — now triggers an automatic re-analysis after 400ms debounce. No need to click "Re-Analyse" for every tweak',
+    'Dropped redundant "Every" prefix on TX interval options. "Every 1 hour" is now just "1 hour". Label changed from "How often does it transmit?" to "TX interval"',
+    'Amber "INPUTS CHANGED" banner replaced with a subtle pulsing "UPDATING…" indicator during the debounce window. Results dim to 60% opacity while recomputing, restore to full opacity when done',
+    'Initial analysis still requires the big ANALYSE DESIGN button (so the tool doesn\'t run a blind sim on first page load with default values)',
   ],
 };
 
@@ -2106,6 +2110,21 @@ function DesignPanel() {
     if (p) { setEnvMeanT(p.meanT); setEnvYearAmp(p.yearAmp); setEnvDayAmp(p.dayAmp); }
   }, [envPreset]);
 
+  // Auto re-analyse on ANY input change. Debounced 400ms so slider drags
+  // don't fire dozens of runs. Only fires after the user has clicked
+  // ANALYSE DESIGN at least once (so the initial empty state doesn't trigger
+  // a blind first run). The first-time click lives on the big amber button.
+  useEffect(() => {
+    if (!results) return; // never auto-run until user's first manual analyse
+    const t = setTimeout(() => {
+      runAnalysis();
+    }, 400);
+    return () => clearTimeout(t);
+    // Re-run when any sim-affecting input changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetYears, envMeanT, envYearAmp, envDayAmp,
+      backhaul, txFreq, shelfMonths, coverage]);
+
   const runAnalysis = () => {
     // Capture signature AT CLICK TIME so the stamped signature matches the
     // inputs that were actually used for the run. Previously this used the
@@ -2398,9 +2417,9 @@ function DesignPanel() {
 
         <Section title="4 · TX frequency & coverage">
           <label style={{fontSize: 11, color: '#888', fontFamily: '"IBM Plex Mono", monospace',
-                         display: 'block', marginBottom: 4}}>How often does it transmit?</label>
+                         display: 'block', marginBottom: 4}}>TX interval</label>
           <select value={txFreq} onChange={e => setTxFreq(e.target.value)} style={styles.select}>
-            {TX_FREQUENCIES.map(f => <option key={f.key} value={f.key}>Every {f.label}</option>)}
+            {TX_FREQUENCIES.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
           </select>
           <label style={{fontSize: 11, color: '#888', fontFamily: '"IBM Plex Mono", monospace',
                          display: 'block', marginTop: 10, marginBottom: 4}}>Coverage quality</label>
@@ -2465,19 +2484,25 @@ function DesignPanel() {
 
         {results && (
           <>
-            {isStale && (
+            {(isStale || analysing) && (
               <div style={{
-                padding: '10px 16px', marginBottom: 12,
-                background: 'rgba(240, 173, 78, 0.12)',
-                border: '1px solid #f0ad4e',
-                color: '#f0ad4e',
-                fontSize: 12, fontFamily: '"IBM Plex Mono", monospace',
+                padding: '6px 14px', marginBottom: 10,
+                background: 'rgba(201, 123, 74, 0.08)',
+                border: '1px solid rgba(201, 123, 74, 0.3)',
+                color: '#c97b4a',
+                fontSize: 11, fontFamily: '"IBM Plex Mono", monospace',
                 letterSpacing: '0.05em',
+                display: 'flex', alignItems: 'center', gap: 8,
               }}>
-                ⚠ INPUTS CHANGED — results below reflect the previous analysis. Click <strong>Re-Analyse</strong> to update.
+                <span style={{
+                  display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                  background: '#c97b4a',
+                  animation: 'pulse 1s infinite',
+                }} />
+                {analysing ? 'RE-ANALYSING…' : 'UPDATING…'}
               </div>
             )}
-            <div style={{opacity: isStale ? 0.55 : 1, transition: 'opacity 0.3s'}}>
+            <div style={{opacity: (isStale || analysing) ? 0.6 : 1, transition: 'opacity 0.2s'}}>
               <DesignValidation />
               <DesignVerdict results={results} />
               <DesignRecommendations results={results} />
