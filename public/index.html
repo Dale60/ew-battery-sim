@@ -98,14 +98,15 @@ const {
 // last updated and what changed without trawling the changelog.
 // =============================================================================
 const VERSION_INFO = {
-  version: '3.8.8',
+  version: '3.8.9',
   released: '2026-04-22',
-  headline: 'Physics-based life model (calibrated against 10 Saft datasheet anchors)',
+  headline: 'Honest Y-axis + no more fake 30yr ceiling',
   details: [
-    'Rebuilt the Design tab life calculation as a proper state-variable physics simulator (PHYSICS_V2). Daily-timestep sim integrates capacity depletion, temperature-compensated self-discharge, reversible passivation (idle growth / pulse recovery), permanent ageing (monotonic LiCl layer growth + seal creep), and cold-pulse stress acceleration. Life ends when V_pulse drops below cutoff or SOC < 10% — no more arbitrary caps',
-    'Calibrated against 10 validation anchors drawn from Saft LS33600 and LSH20 datasheets and published application norms. All 10 pass within stated tolerance. Validation table is shown collapsed at the top of the Design results — click to expand and verify every anchor',
-    'Tooltips show the physical failure mode (V_pulse / capacity) with the underlying mechanism cited. Each data point is traceable to a datasheet source',
-    'Result: the A-pack @ -20°C Arctic scenario now predicts ~4.9yr (was 25yr), Optima Pulse nominal ~7yr (matches field experience), HPC1530 moderate daily ~15yr (matches Saft LS+HPC rated life). Grounded in physics, not arbitrary clips',
+    'Physics sim window reduced from 30yr to 18yr. Nothing about Li-SOCl₂ life prediction is reliable beyond ~15yr — Saft\'s own "5-20+yr" language is application range, not a confident point estimate',
+    'Cells that survive the full 18yr sim window are now flagged as INDETERMINATE (displayed as ">18yr") rather than reported as "18.0 yr" with a fake margin. Removes the misleading 30yr ceiling that was pegging daily/weekly HPC predictions',
+    'Y-axis ceiling dropped to max 18yr and clamps to max(target×2, 12yr). Chart no longer visually implies anything about the 18-30yr range',
+    'Fixed "NaN yr" appearing in rated-life tooltip when cells had undefined permanent_aging field',
+    'Ranking: indeterminate-survived cells are ranked below cells with a concrete passing prediction, so "definitely works" beats "might work but model can\'t tell you"',
   ],
 };
 
@@ -2181,6 +2182,11 @@ function DesignPanel() {
           // See PHYSICS_V2.VALIDATION_RESULTS for the anchor suite.
           // =============================================================
 
+          // Sim ceiling: 18 years. Nothing we model reliably predicts life
+          // beyond this — Saft's own "5-20+yr" language is application range,
+          // not a confident point estimate. Cells that "survive" the window
+          // are flagged as indeterminate, NOT reported as 18yr.
+          const SIM_CEILING_YRS = 18;
           const pulses_per_day = 86400 / freq.period_s;
           const physicsResult = PHYSICS_V2.simulate(cell, {
             base_I_uA: bh.baseCurrent_uA,
@@ -2190,13 +2196,16 @@ function DesignPanel() {
             T_mean_C: envMeanT,
             T_yearly_amp: envYearAmp,
             shelf_months: shelfMonths,
-            max_years: 30,
+            max_years: SIM_CEILING_YRS,
             coverage_retry_mult: covMult,
             voltage_scaled_inrush: bh.voltageScaledModem || false,
           });
 
           let achievedLife = physicsResult.life_years;
           let limitingFactor, limitingSource;
+          // A cell that doesn't fail within the sim window isn't "18 years" —
+          // it's "we don't know". Mark it so UI shows ">18yr indeterminate".
+          let survivedSimWindow = physicsResult.mode === 'survived';
 
           if (physicsResult.mode === 'V_pulse') {
             limitingFactor = 'V_pulse brownout';
@@ -2205,8 +2214,8 @@ function DesignPanel() {
             limitingFactor = 'energy capacity';
             limitingSource = `Capacity (${cell.capacity_Ah_25C} Ah) exhausted at year ${achievedLife.toFixed(1)}. Combined load + self-discharge integrated over time. Ref: Saft ${cell.chemistry} datasheet.`;
           } else {
-            limitingFactor = 'none (survived sim window)';
-            limitingSource = `Physics simulation ran ${achievedLife.toFixed(0)} yr without failure — either capacity or V_pulse. Very low duty. Real-world ageing beyond this is not fully characterised.`;
+            limitingFactor = 'indeterminate (beyond 18yr)';
+            limitingSource = `Simulation ran the full ${SIM_CEILING_YRS}-year window at this duty without triggering V_pulse or capacity failure. Real cells have additional long-term mechanisms (seal creep, electrolyte ageing, stochastic failures) that this model does not capture. If your deployment actually needs >15 yr life on a single cell, prototype and field-age — no datasheet or sim will give you a confident answer past ~15 years.`;
           }
 
           // Legacy compat — keep old simulate() result for SOC chart (Simulate tab)
@@ -2222,7 +2231,9 @@ function DesignPanel() {
           const life_energy = load_mAh_yr > 0 ? cap_mAh / load_mAh_yr : 99;
           const life_sd = (load_mAh_yr + SD_mAh_yr) > 0 ? cap_mAh / (load_mAh_yr + SD_mAh_yr) : 99;
           // Rated is now derived from the physics (perm ageing rate → V_pulse collapse time)
-          const life_rated = (cell.permanent_aging_V_per_year_25C > 0)
+          const life_rated = (cell.permanent_aging_V_per_year_25C &&
+                               cell.permanent_aging_V_per_year_25C > 0 &&
+                               isFinite(cell.permanent_aging_V_per_year_25C))
             ? (cell.OCV - cell.cutoffV - 0.15) / cell.permanent_aging_V_per_year_25C
             : 20;
 
@@ -2233,7 +2244,8 @@ function DesignPanel() {
             freqKey: freq.key,
             freqLabel: freq.label,
             period_s: freq.period_s,
-            life: achievedLife,               // no more 25yr cap — show honest number
+            life: achievedLife,
+            survivedSimWindow,
             life_energy,
             life_sd,
             life_rated,
@@ -2251,7 +2263,7 @@ function DesignPanel() {
             const margin = (achievedLife - targetYears) / targetYears;
             cellBest[cellKey] = {
               life: achievedLife, freq: freq.key, margin,
-              pulseFail: pulseFailed, overPulse, overPulseRatio,
+              pulseFail: pulseFailed, overPulse, overPulseRatio, survivedSimWindow,
               life_energy, life_sd, life_rated,
               limitingFactor, limitingSource,
             };
@@ -2260,12 +2272,27 @@ function DesignPanel() {
       }
 
       // Rank cells: overPulse cells last (datasheet-exceeding = unreliable),
-      // then pulseFail cells (V_pulse brownout), then by margin.
+      // Ranking priority (best → worst):
+      //   1. Cells with a concrete predicted life that meets target (best margin first)
+      //   2. Cells that "survived sim window" — indeterminate but at least ≥18yr
+      //   3. Cells predicted below target (highest margin first = closest to passing)
+      //   4. Cells that V_pulse brown out
+      //   5. Cells that exceed datasheet pulse rating
       const ranked = Object.entries(cellBest)
         .map(([k, v]) => ({ cellKey: k, cellName: CELLS[k].shortName, fullName: CELLS[k].name, ...v }))
         .sort((a, b) => {
           if (a.overPulse !== b.overPulse) return a.overPulse ? 1 : -1;
           if (a.pulseFail !== b.pulseFail) return a.pulseFail ? 1 : -1;
+          // "survived" cells count as passing-target-with-unknown-margin
+          // Rank them after any cell that concretely passes, before any that fails
+          const aPass = a.margin >= 0 || a.survivedSimWindow;
+          const bPass = b.margin >= 0 || b.survivedSimWindow;
+          if (aPass !== bPass) return aPass ? -1 : 1;
+          // Within "passing" group: concrete > survived (precision beats indeterminacy)
+          if (aPass && bPass) {
+            if (a.survivedSimWindow !== b.survivedSimWindow)
+              return a.survivedSimWindow ? 1 : -1;
+          }
           return b.margin - a.margin;
         });
 
@@ -2618,13 +2645,21 @@ function DesignRecommendations({ results }) {
                     V_PULSE FAIL
                   </span>
                 )}
+                {r.survivedSimWindow && (
+                  <span style={{fontSize: 9, color: '#888', background: 'rgba(150,150,150,0.12)',
+                                padding: '2px 6px', letterSpacing: '0.08em',
+                                fontFamily: '"IBM Plex Mono", monospace'}}
+                        title="Sim ran to ceiling without failure — real-world limit unknown">
+                    BEYOND MODEL
+                  </span>
+                )}
                 <span style={{fontSize: 12, color, fontFamily:'"IBM Plex Mono",monospace',
                               letterSpacing: '0.05em'}}>
-                  {r.life.toFixed(1)} yr
+                  {r.survivedSimWindow ? `>${r.life.toFixed(0)} yr` : `${r.life.toFixed(1)} yr`}
                 </span>
                 <span style={{fontSize: 11, color: '#888', fontFamily:'"IBM Plex Mono",monospace',
                               width: 70, textAlign: 'right'}}>
-                  {r.margin >= 0 ? '+' : ''}{(r.margin * 100).toFixed(0)}%
+                  {r.survivedSimWindow ? '—' : (r.margin >= 0 ? '+' : '') + (r.margin * 100).toFixed(0) + '%'}
                 </span>
               </div>
             </div>
@@ -2642,11 +2677,18 @@ function DesignChart({ results, targetYears }) {
   //   bar:     horizontal bars at the USER'S chosen freq only, cleanest "which cell" view
   const [chartStyle, setChartStyle] = useState('scatter');
 
+  // Chart Y-axis ceiling: respect the same clamp as the axis domain so points
+  // that "survived sim window" render at the ceiling instead of shooting off-chart.
+  // Chart Y-axis ceiling: capped at 18yr because nothing we realistically
+  // model can be trusted beyond that. Cells that "survive" longer in the sim
+  // are flagged survivedSimWindow and shown as ">18yr" rather than a number.
+  const Y_MAX = Math.min(18, Math.max(targetYears * 2, 12));
+
   const periodIndices = TX_FREQUENCIES.map((f, i) => ({ ...f, x: i }));
   const data = results.scatterData.map(d => ({
     ...d,
     x: periodIndices.findIndex(p => p.key === d.freqKey),
-    y: d.life,
+    y: Math.min(d.life, Y_MAX),
   }));
 
   // Group by cell for line/scatter per-series rendering
@@ -2662,7 +2704,9 @@ function DesignChart({ results, targetYears }) {
   const barData = results.ranked.map(r => ({
     name: CELLS[r.cellKey].shortName,
     cellKey: r.cellKey,
-    life: r.life,
+    life: Math.min(r.life, Y_MAX),   // clamp so bar doesn't exceed chart scale
+    lifeRaw: r.life,                   // keep the real number for tooltip
+    survivedSimWindow: r.survivedSimWindow,
     meetsTarget: r.margin >= 0 && !r.pulseFail && !r.overPulse,
     pulseFail: r.pulseFail,
     overPulse: r.overPulse,
@@ -2683,6 +2727,7 @@ function DesignChart({ results, targetYears }) {
     const factorColor = d.limitingFactor === 'rated ceiling' ? '#a78bfa'
                       : d.limitingFactor === 'self-discharge' ? '#6cbbf2'
                       : d.limitingFactor === 'V_pulse brownout' ? '#ff7a7a'
+                      : d.limitingFactor === 'beyond model scope' ? '#888'
                       : '#f0c674'; // energy capacity
 
     return (
@@ -2694,11 +2739,18 @@ function DesignChart({ results, targetYears }) {
           {d.cellName || d.name}
         </div>
         <div style={{color: '#e8e8e8', fontSize: 13, marginBottom: 8}}>
-          {(d.life).toFixed(1)} yr
+          {d.survivedSimWindow ? `>${d.life.toFixed(0)} yr` : `${d.life.toFixed(1)} yr`}
           {d.freqLabel && <span style={{color: '#888', fontSize: 11}}> @ every {d.freqLabel}</span>}
         </div>
 
         {/* Status flags */}
+        {d.survivedSimWindow && (
+          <div style={{color: '#888', marginBottom: 4,
+                       fontFamily: 'system-ui, sans-serif', fontSize: 10, lineHeight: 1.4}}>
+            ⚠ Sim ran to ceiling without failure — real-world ageing beyond this duty
+            isn't fully characterised. Treat as ">{d.life.toFixed(0)}yr but don't count on it".
+          </div>
+        )}
         {d.overPulse && (
           <div style={{color: '#ff5a5a', marginBottom: 4}}>
             ⛔ exceeds datasheet pulse rating
@@ -2739,9 +2791,9 @@ function DesignChart({ results, targetYears }) {
             {typeof d.life_energy === 'number' && (
               <div style={{marginTop: 8, paddingTop: 6, borderTop: '1px dashed #2a2a2a',
                            color: '#888', fontSize: 9, lineHeight: 1.6}}>
-                energy: {d.life_energy > 99 ? '∞' : d.life_energy.toFixed(1) + 'yr'} &nbsp;·&nbsp;
-                SD: {d.life_sd > 99 ? '∞' : d.life_sd.toFixed(1) + 'yr'} &nbsp;·&nbsp;
-                rated: {d.life_rated}yr
+                energy: {typeof d.life_energy === 'number' && isFinite(d.life_energy) ? (d.life_energy > 99 ? '∞' : d.life_energy.toFixed(1) + 'yr') : '—'} &nbsp;·&nbsp;
+                SD: {typeof d.life_sd === 'number' && isFinite(d.life_sd) ? (d.life_sd > 99 ? '∞' : d.life_sd.toFixed(1) + 'yr') : '—'} &nbsp;·&nbsp;
+                rated: {typeof d.life_rated === 'number' && isFinite(d.life_rated) ? d.life_rated.toFixed(0) + 'yr' : '—'}
               </div>
             )}
           </div>
@@ -2794,7 +2846,7 @@ function DesignChart({ results, targetYears }) {
                    stroke="#888" tick={{fill: '#888', fontSize: 11}}
                    label={{value: 'TX frequency', position: 'insideBottom', offset: -10,
                            fill: '#888', fontSize: 11}} />
-            <YAxis type="number" dataKey="y" name="Life" domain={[0, Math.max(25, targetYears * 1.5, ...data.map(d => d.y || 0))]}
+            <YAxis type="number" dataKey="y" name="Life" domain={[0, Y_MAX]}
                    stroke="#888" tick={{fill: '#888', fontSize: 11}}
                    label={{value: 'Achievable life (yr)', angle: -90,
                            position: 'insideLeft', fill: '#888', fontSize: 11}} />
@@ -2823,7 +2875,7 @@ function DesignChart({ results, targetYears }) {
                    stroke="#888" tick={{fill: '#888', fontSize: 11}}
                    label={{value: 'TX frequency', position: 'insideBottom', offset: -10,
                            fill: '#888', fontSize: 11}} />
-            <YAxis type="number" domain={[0, Math.max(25, targetYears * 1.5, ...data.map(d => d.y || 0))]}
+            <YAxis type="number" domain={[0, Y_MAX]}
                    stroke="#888" tick={{fill: '#888', fontSize: 11}}
                    label={{value: 'Achievable life (yr)', angle: -90,
                            position: 'insideLeft', fill: '#888', fontSize: 11}} />
@@ -2847,7 +2899,7 @@ function DesignChart({ results, targetYears }) {
           <BarChart data={barData} layout="vertical"
                     margin={{top: 10, right: 50, left: 10, bottom: 20}}>
             <CartesianGrid stroke="#2a2a2a" strokeDasharray="2 4" />
-            <XAxis type="number" domain={[0, Math.max(25, targetYears * 1.5)]}
+            <XAxis type="number" domain={[0, Math.min(25, Math.max(targetYears * 2, 18))]}
                    stroke="#888" tick={{fill: '#888', fontSize: 11}}
                    label={{value: 'Achievable life (yr)', position: 'insideBottom',
                            offset: -5, fill: '#888', fontSize: 11}} />
